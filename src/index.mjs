@@ -2,10 +2,8 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { Sky } from 'three/addons/objects/Sky.js';
 import * as THREE from 'three';
 
-
 // Constants
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
-const ZERO_VECTOR = new THREE.Vector3();
 const PI = Math.PI;
 
 const PLAYER_HEIGHT = 2;
@@ -24,6 +22,9 @@ class Demo3D {
     controls = new PointerLockControls(this.camera, this.renderElem);
     scene = new THREE.Scene();
 
+    // Collision objects
+    objects = [];
+
     // 1-1 correspondence between these arrays
     keys = ['W', 'A', 'S', 'D', 'SHIFT', ' '];
     keysDown = [0, 0, 0, 0, 0, 0];
@@ -32,16 +33,18 @@ class Demo3D {
     light = null;
     sky = null;
 
-    // Instantaneous acceleration at time now
-    acceleration = new THREE.Vector3();
-    // Cumulative velocity of camera
+    // Player object
+    player = new THREE.Object3D();
+
+    // Current velocity of player
     velocity = new THREE.Vector3();
-    // Current position of camera
+    // Current position of player
     position = new THREE.Vector3();
 
     constructor() {
         this.configureRenderer();
         this.addEventListeners();
+        this.initPlayer();
         this.initScene();
 
         // Append renderer canvas to document body
@@ -104,8 +107,15 @@ class Demo3D {
         return true;
     }
 
+    initPlayer() {
+        const { camera, player, scene } = this;
+        camera.position.y = PLAYER_HEIGHT;
+        player.add(camera);
+        scene.add(player);
+    }
+
     initScene() {
-        const { camera, scene, position, renderer } = this;
+        const { player, camera, scene, position, renderer } = this;
 
         // Add directional light
         const light = this.light = new THREE.DirectionalLight(0xffffff);
@@ -117,6 +127,9 @@ class Demo3D {
         light.shadow.mapSize.height = 2048;
         light.shadow.camera.near = 0.5;
         light.shadow.camera.far = 500;
+
+        // Note: Sun/light position is set
+        // every frame in the render loop
 
         // Add ambient light
         scene.add(new THREE.AmbientLight(0x888888));
@@ -136,16 +149,11 @@ class Demo3D {
 
         this.updateSkyParams(params);
 
-        // Sets direction light position
-        // as well
-        this.updateSunPosition(0, 180);
-
         // Add plane to represent floor
         const planeMater = new THREE.MeshPhongMaterial({ side: THREE.FrontSide });
         const planeGeom = new THREE.PlaneGeometry(1000, 1000, 100, 100);
         const plane = new THREE.Mesh(planeGeom, planeMater);
         plane.rotateX(-Math.PI / 2);
-        plane.position.y = -10;
         plane.receiveShadow = true;
         scene.add(plane);
 
@@ -153,6 +161,7 @@ class Demo3D {
         const cubeMater = new THREE.MeshLambertMaterial({ color: 0x00ff00 });
         const cubeGeom = new THREE.BoxGeometry(1, 1, 1);
         const cube = new THREE.Mesh(cubeGeom, cubeMater);
+        cube.position.y += 0.5;
         cube.castShadow = true;
         scene.add(cube);
 
@@ -160,8 +169,8 @@ class Demo3D {
         scene.add(helper);
 
         // Look at cube
-        position.addVectors(position, new THREE.Vector3(5, 0, 0));
-        camera.position.copy(position);
+        position.copy(new THREE.Vector3(5, 0, 0));
+        player.position.copy(position);
         camera.lookAt(cube.position);
     }
 
@@ -188,21 +197,14 @@ class Demo3D {
         light.position.setFromSphericalCoords(100, phi, theta);
     }
 
-    lastTime = Date.now()
+    getAcceleration() {
+        const { keysDown, camera } = this;
 
-    render() {
-        const { camera, scene, position,
-            velocity, acceleration, keysDown } = this;
-
-        const now = Date.now();
-        const delta = now - this.lastTime;
-        this.lastTime = now;
+        const moveDir = new THREE.Vector3();
 
         const forward_backward = keysDown[2] - keysDown[0]; // BACK - FORWARD
         const left_right = keysDown[3] - keysDown[1]; // RIGHT - LEFT
         const up_down = keysDown[5] - keysDown[4]; // UP - DOWN
-
-        acceleration.copy(ZERO_VECTOR);
 
         if (forward_backward || left_right) {
             // First re-map from range [-1, 1] to range [0, 2]
@@ -213,9 +215,7 @@ class Demo3D {
             const index = (forward_backward + 1) + 3 * (left_right + 1);
             const wishDir = dirs[index];
 
-            // Get camera's direction vector and store in 
-            // a vector called moveDir
-            const moveDir = new THREE.Vector3();
+            // Get camera's direction vector
             camera.getWorldDirection(moveDir);
 
             // We do not want y-component to affect movement
@@ -224,31 +224,54 @@ class Demo3D {
             // Rotate moveDir vector moveDir degrees around 
             // the y-axis to get final movement direction 
             moveDir.applyAxisAngle(Y_AXIS, wishDir);
-
-            // setLength first normalizes then multiplies each component by X.
-            moveDir.setLength(ACCEL_SPEED);
-
-            // This now represents our acceleration vector
-            acceleration.copy(moveDir);
         }
 
         // Account for up/down acceleration
-        if (up_down)
-            acceleration.y += up_down * ACCEL_SPEED;
+        moveDir.y = up_down;
 
+        // Now we have a vector pointing in the direction
+        // we wish to move in. Set its length to ACCEL_SPEED
+        // and this now represents our acceleration vector.
+        const acceleration = moveDir.setLength(ACCEL_SPEED);
+
+        return acceleration;
+    }
+
+    // Apply drag force proportional to velocity at current time
+    // Mass of player is currently implicitly assumed to be 1.
+    // F=MA => A=F/M M=1 thus A=F
+    applyFriction(velocity, acceleration) {
         // Account for drag/friction TODO: separate ground/air friction.
-        const drag = velocity.clone().negate().multiplyScalar(DRAG_COEF);
-        acceleration.add(drag);
+        const dragForce = velocity.clone().negate().multiplyScalar(DRAG_COEF);
+        acceleration.add(dragForce);
+    }
 
-        // acceleration.y += delta * GRAVITY;
+    updatePlayerPosition(delta) {
+        const { player, position, velocity } = this;
 
-        // v(t) = v0 + a*t
-        velocity.add(acceleration.clone().multiplyScalar(delta));
+        // Get acceleration. This is only a function of 
+        // the movement keys pressed during this frame. 
+        const acceleration = this.getAcceleration();
 
-        // Cap velocity
+        // Apply friction/drag
+        this.applyFriction(velocity, acceleration);
+
+        // TODO: maybe add gravity/jump mechanic 
+        // instead of currently flight mechanic
+        // acceleration.y += GRAVITY;
+
+        // Apply acceleration to velocity
+        // via the formula v(t) = v0 + a*t
+        velocity.add(
+            acceleration.clone()
+                .multiplyScalar(delta)
+        );
+
+        // Cap velocity to MAX_SPEED
         if (velocity.lengthSq() > MAX_SPEED ** 2)
             velocity.setLength(MAX_SPEED);
 
+        // Calculate final position via
         // x(t) = x0 + v*t + 0.5*a*t^2
         const deltaPos = velocity.clone()
             .multiplyScalar(delta)
@@ -258,19 +281,35 @@ class Demo3D {
             );
         position.add(deltaPos);
 
-        // "Floor"
-        if (position.y <= -10 + PLAYER_HEIGHT)
-            position.y = -10 + PLAYER_HEIGHT;
+        // Simulate floor
+        if (position.y <= 0)
+            position.y = 0;
 
-        // Set camera to the new position.
-        camera.position.copy(position);
+        // Set player to the new position.
+        player.position.copy(position);
+    }
 
-        // Simulate daylight cycle
-        this.updateSunPosition(now * 0.001, 180);
+    lastTime = Date.now()
 
-        this.renderer.render(scene, camera);
+    render() {
+        const { camera, scene } = this;
 
+        // Go ahead and queue the next frame
+        // JavaScript is single-threaded/synchronous
         requestAnimationFrame(this.render.bind(this));
+
+        // Very important - calculate time between frames
+        const now = Date.now();
+        const delta = now - this.lastTime;
+        this.lastTime = now;
+
+        this.updatePlayerPosition(delta);
+
+        // Simulate daylight cycle. 1 degree per second.
+        this.updateSunPosition(now * 0.001, 125);
+
+        // Render the scene!
+        this.renderer.render(scene, camera);
     }
 
 }
@@ -279,4 +318,3 @@ const demo = new Demo3D();
 
 window.THREE = THREE;
 window.demo = demo;
-
