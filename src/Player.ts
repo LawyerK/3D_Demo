@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import Box3D from './Box3D';
 
-import { PI, GROUND_ACCEL, GROUND_DRAG_COEF, MAX_SPEED, PLAYER_HEIGHT, PLAYER_WIDTH, Y_AXIS, GRAVITY, JUMP_ACCEL, AIR_ACCEL, AIR_DRAG_COEF } from './Constants';
+import { PI, GROUND_ACCEL, GROUND_DRAG_COEF, MAX_SPEED, PLAYER_HEIGHT, PLAYER_WIDTH, Y_AXIS, GRAVITY, JUMP_IMPULSE, AIR_ACCEL, AIR_DRAG_COEF } from './Constants';
 import Controls from './Controls';
 
 // Move direction mapped by unique combination of forward/backward/left/right keys.
@@ -75,27 +75,6 @@ export default class Player {
         const accel = ON_GROUND ? GROUND_ACCEL : AIR_ACCEL;
         const acceleration = moveDir.setLength(accel);
 
-        // If not flying, on ground, and jump key pressed
-        // then apply upward "jump" force
-        if (!IS_FLYING && ON_GROUND && keysDown[5]) {
-            console.log('JUMP JUMP JUMP');
-            acceleration.y += JUMP_ACCEL;
-            this.ON_GROUND = false;
-            // We are on the ground - 
-            // we should have no y-velocity
-            // however due to gravity we will
-            // always have some negative y-vel
-            // while on ground. Set this to zero
-            // to allow for us to get off the
-            // ground this frame otherwise
-            // we run into "double-jump"
-            // bugs where ON_GROUND flag 
-            // gets reset before we are
-            // able to actually leave
-            // the ground.
-            this.velocity.y = 0;
-        }
-
         return acceleration;
     }
 
@@ -110,27 +89,18 @@ export default class Player {
             .negate()
             .multiplyScalar(dragCoef);
 
-        // When going up, gravity points down
-        // and drag point down, so they add
-        // and slow the ascent. 
-        // When falling, gravity is down
-        // and drag is up so
-        // they subtract and
-        // the descent is slowed.
-        // It should even out, but
-        // it feels very WRONG
-        // and I don't know why!
-        // Removing y-comp of drag feels better.
-        // TODO: figure out what's going on!
-        // This is acceptible for now.
         if (!this.IS_FLYING)
             dragForce.y = 0;
 
         acceleration.add(dragForce);
     }
 
+    // These kinematics equations are technically not valid
+    // due to the application of a drag force proportional
+    // to velocity.
     updatePosition(delta: number) {
-        const { object, position, velocity, IS_FLYING } = this;
+        const { object, position, velocity, ON_GROUND, IS_FLYING } = this;
+        const { keysDown } = this.controls;
 
         // Get acceleration. This is only a function of 
         // the movement keys pressed during this frame. 
@@ -139,20 +109,17 @@ export default class Player {
         // Apply friction/drag
         this.applyFriction(velocity, acceleration);
 
-        // If not flying, appply gravity.
-        if (!IS_FLYING)
+        // If not on ground and not flying, 
+        // appply gravity.
+        if (!ON_GROUND && !IS_FLYING)
             acceleration.y -= GRAVITY;
 
-        // Update velocity via the
-        // formula v(t) = v0 + a*t
-        velocity.add(
-            acceleration.clone()
-                .multiplyScalar(delta)
-        );
-
-        // // Cap velocity to MAX_SPEED
-        // if (velocity.lengthSq() > MAX_SPEED ** 2)
-        //     velocity.setLength(MAX_SPEED);
+        // If not flying, on ground, and jump key pressed
+        // then apply upward "jump" impulse
+        if (!IS_FLYING && ON_GROUND && keysDown[5]) {
+            this.velocity.y = JUMP_IMPULSE;
+            this.ON_GROUND = false;
+        }
 
         // Calculate final position via
         // x(t) = x0 + v*t + 0.5*a*t^2
@@ -163,6 +130,13 @@ export default class Player {
                     .multiplyScalar(0.5 * delta ** 2)
             );
         position.add(deltaPos);
+
+        // Update velocity via the
+        // formula v(t) = v0 + a*t
+        velocity.add(
+            acceleration.clone()
+                .multiplyScalar(delta)
+        );
 
         // Simulate floor
         if (position.y < 0) {

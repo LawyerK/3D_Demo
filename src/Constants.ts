@@ -8,7 +8,7 @@ export const PLAYER_HEIGHT = 2;
 
 export const GROUND_ACCEL = 0.00005;
 export const AIR_ACCEL = 0.000025;
-export const JUMP_ACCEL = 0.0006;
+export const JUMP_IMPULSE = 0.008;
 export const GROUND_DRAG_COEF = 0.008;
 export const AIR_DRAG_COEF = 0.004;
 export const GRAVITY = 0.000025;
