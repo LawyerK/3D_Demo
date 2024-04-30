@@ -1,8 +1,11 @@
+import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import * as THREE from 'three';
 import Player from './Player';
 import Box3D from './Box3D';
 import Controls from './Controls';
+import SettingsManager from './Settings';
+import { WORLD_SIZE } from './Constants';
 
 interface SkyParams {
     turbidity: number;
@@ -14,18 +17,22 @@ interface SkyParams {
 
 class Main {
     renderer = new THREE.WebGLRenderer({ antialias: true });
-    camera = new THREE.PerspectiveCamera(70, 0.1, 1, 1000);
+    camera = new THREE.PerspectiveCamera(70, 0.01, 1, 1000);
     scene = new THREE.Scene();
 
     // Collision objects
     objects: Array<Box3D> = [];
 
     controls = new Controls(this.camera, this.renderer.domElement);
-    player = new Player(this.camera, this.controls, this.objects);
+    settings = new SettingsManager();
+    player = new Player(this.camera, this.controls, this.settings, this.objects);
 
     // Initialized by initScene()
     light: THREE.DirectionalLight;
     sky: Sky;
+
+    // Possibly temporary
+    runDaylightCycle = true;
 
     constructor() {
         // Must add the player object to scene
@@ -38,8 +45,18 @@ class Main {
         // Append renderer canvas element to document body
         document.body.appendChild(this.renderer.domElement);
 
+        this.controls.registerKeyHandler('T', this.toggleDaylightCycle.bind(this));
+
         // Begin render loop
         this.render();
+    }
+
+    toggleDaylightCycle(isKeydown: number) {
+        if (!isKeydown)
+            return;
+
+        this.runDaylightCycle = !this.runDaylightCycle;
+        this.updateSunPosition(60, 125);
     }
 
     configureRenderer() {
@@ -67,29 +84,167 @@ class Main {
         renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    initScene() {
-        const { scene, renderer } = this;
+    addLights() {
+        const { scene } = this;
 
         // Add directional light
-        const light = this.light = new THREE.DirectionalLight(0xffffff);
-        scene.add(light);
+        const dirLight = this.light = new THREE.DirectionalLight(0xffffff);
+        this.configureShadowCasting(dirLight);
+        scene.add(dirLight);
+
+        const ambLight = new THREE.AmbientLight(0x888888);
+        scene.add(ambLight);
+    }
+
+    configureShadowCasting(dirLight: THREE.DirectionalLight) {
+        const { scene } = this;
+
+        const HALF_WORLD_SIZE = WORLD_SIZE / 2;
 
         // Set up shadow properties for the light
-        light.castShadow = true;
-        light.shadow.mapSize.width = 2048;
-        light.shadow.mapSize.height = 2048;
-        light.shadow.camera.near = 0.5;
-        light.shadow.camera.far = 500;
+        dirLight.castShadow = true;
 
-        // Note: Sun/light position is set
-        // every frame in the render loop
+        dirLight.shadow.mapSize.width = 4096;
+        dirLight.shadow.mapSize.height = 4096;
 
-        // Add ambient light
-        scene.add(new THREE.AmbientLight(0x888888));
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 2 * WORLD_SIZE;
 
-        // Add sky
+        dirLight.shadow.camera.left = -HALF_WORLD_SIZE;
+        dirLight.shadow.camera.right = HALF_WORLD_SIZE;
+        dirLight.shadow.camera.top = HALF_WORLD_SIZE;
+        dirLight.shadow.camera.bottom = -HALF_WORLD_SIZE;
+
+        const helper = new THREE.CameraHelper(dirLight.shadow.camera);
+        scene.add(helper);
+    }
+
+    addCube() {
+        const { scene } = this;
+
+        const material = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide });
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+
+        const cube = new THREE.Mesh(geometry, material);
+        cube.position.y += 0.5;
+        cube.position.z -= 5;
+        cube.castShadow = true;
+        scene.add(cube);
+
+        const texLoader = new THREE.TextureLoader();
+
+        (async () => {
+            const aoMap = await texLoader.loadAsync(
+                './assets/metal/Metal_006_ambientOcclusion.jpg'
+            );
+            material.aoMap = aoMap;
+
+            const diffuseMap = await texLoader.loadAsync(
+                './assets/metal/Metal_006_basecolor.jpg'
+            );
+            material.map = diffuseMap;
+
+            // const heightMap = await texLoader.loadAsync(
+            //     './assets/metal/Metal_006_height.png'
+            // )
+            // material.displacementMap = heightMap;
+
+            const metalMap = await texLoader.loadAsync(
+                './assets/metal/Metal_006_normal.jpg'
+            );
+            material.metalnessMap = metalMap;
+            material.metalness = 0.4;
+
+            const normMap = await texLoader.loadAsync(
+                './assets/metal/Metal_006_normal.jpg'
+            );
+            material.normalMap = normMap;
+
+            const roughMap = await texLoader.loadAsync(
+                './assets/metal/Metal_006_roughness.jpg'
+            );
+            material.roughnessMap = roughMap;
+            material.roughness = 1;
+
+            // Force an update of the material
+            // so it renders with the new tex's
+            material.needsUpdate = true;
+        })().catch(error => {
+            alert('Error loading cube textures: ' + error);
+            console.trace(error);
+        });
+
+        const cubeCol = new Box3D(cube.position, new THREE.Vector3(1, 1, 1));
+        this.objects.push(cubeCol);
+    }
+
+    addFloor() {
+        const { scene } = this;
+
+        const material = new THREE.MeshLambertMaterial({ side: THREE.FrontSide });
+        const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 1, 1);
+        const plane = new THREE.Mesh(geometry, material);
+
+        plane.rotateX(-Math.PI / 2);
+        plane.receiveShadow = true;
+        scene.add(plane);
+
+        // Asynchronously load in textures
+        // It is fine to continue along with
+        // other stuff while these load in.
+
+        const texLoader = new THREE.TextureLoader();
+        const exrLoader = new EXRLoader();
+
+        (async () => {
+            const applyRepeat = (tex: THREE.Texture) => {
+                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+                tex.repeat.set(WORLD_SIZE / 5, WORLD_SIZE / 5);
+            }
+
+            const diffuseMap = await texLoader.loadAsync(
+                './assets/brick/t_brick_floor_002_diffuse_1k.jpg'
+            );
+            material.map = diffuseMap;
+            applyRepeat(diffuseMap);
+
+            const displMap = await texLoader.loadAsync(
+                './assets/brick/t_brick_floor_002_displacement_1k.png'
+            )
+            material.displacementMap = displMap;
+            applyRepeat(displMap);
+
+            const roughMap = await texLoader.loadAsync(
+                './assets/brick/t_brick_floor_002_rough_1k.jpg'
+            );
+            material.bumpMap = roughMap;
+            applyRepeat(roughMap);
+
+            const normMap = await exrLoader.loadAsync(
+                './assets/brick/t_brick_floor_002_nor_gl_1k.exr'
+            );
+            material.normalMap = normMap;
+            applyRepeat(normMap);
+
+            // Force an update of the material
+            // so it renders with the new tex's
+            material.needsUpdate = true;
+
+            // The displacement map seems to be centered at 0.5
+            // with +/- 0.5 which is unfortunate. This line
+            // compensates for it with code.
+            plane.position.y = -0.5;
+        })().catch(error => {
+            alert('Error loading floor textures: ' + error);
+            console.trace(error);
+        });
+    }
+
+    addSky() {
+        const { scene, renderer } = this;
+
         const sky = this.sky = new Sky();
-        sky.scale.setScalar(450000);
+        sky.scale.setScalar(WORLD_SIZE);
         scene.add(sky);
 
         const params: SkyParams = {
@@ -101,29 +256,16 @@ class Main {
         };
 
         this.updateSkyParams(params);
+    }
 
-        // Add plane to represent floor
-        const planeMater = new THREE.MeshPhongMaterial({ side: THREE.FrontSide });
-        const planeGeom = new THREE.PlaneGeometry(1000, 1000, 100, 100);
-        const plane = new THREE.Mesh(planeGeom, planeMater);
-        plane.rotateX(-Math.PI / 2);
-        plane.receiveShadow = true;
-        scene.add(plane);
+    initScene() {
+        // Note: Sun/light position is set
+        // every frame in the render loop
 
-        // Add cube
-        const cubeMater = new THREE.MeshLambertMaterial({ color: 0x00ff00 });
-        const cubeGeom = new THREE.BoxGeometry(1, 1, 1);
-        const cube = new THREE.Mesh(cubeGeom, cubeMater);
-        cube.position.y += 0.5;
-        cube.position.z -= 5;
-        cube.castShadow = true;
-        scene.add(cube);
-
-        const cubeCol = new Box3D(cube.position, new THREE.Vector3(1, 1, 1));
-        this.objects.push(cubeCol);
-
-        const helper = new THREE.CameraHelper(light.shadow.camera);
-        scene.add(helper);
+        this.addLights();
+        this.addSky();
+        this.addFloor();
+        this.addCube();
     }
 
     updateSkyParams(params: SkyParams) {
@@ -146,13 +288,13 @@ class Main {
         const theta = THREE.MathUtils.degToRad(azimuth);
 
         uniforms.sunPosition.value.setFromSphericalCoords(1, phi, theta);
-        light.position.setFromSphericalCoords(100, phi, theta);
+        light.position.setFromSphericalCoords(WORLD_SIZE, phi, theta);
     }
 
     lastTime = Date.now()
 
     render() {
-        const { camera, scene } = this;
+        const { camera, scene, runDaylightCycle } = this;
 
         // Go ahead and queue the next frame
         // JavaScript is single-threaded/synchronous
@@ -160,19 +302,19 @@ class Main {
 
         // Very important - calculate time between frames
         const now = Date.now();
-        const delta = now - this.lastTime;
+        const dt = now - this.lastTime;
         this.lastTime = now;
 
         // Update all player related things
-        this.player.update(delta);
+        this.player.update(dt);
 
         // Simulate daylight cycle. 1 degree per second.
-        this.updateSunPosition(now * 0.001, 125);
+        if (runDaylightCycle)
+            this.updateSunPosition(now * 0.001, 125);
 
         // Render the scene!
         this.renderer.render(scene, camera);
     }
-
 }
 
 const main = new Main();

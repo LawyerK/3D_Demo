@@ -1,48 +1,141 @@
 import * as THREE from 'three';
 import Box3D from './Box3D';
-
-import { PI, GROUND_ACCEL, GROUND_DRAG_COEF, MAX_SPEED, PLAYER_HEIGHT, PLAYER_WIDTH, Y_AXIS, GRAVITY, JUMP_IMPULSE, AIR_ACCEL, AIR_DRAG_COEF } from './Constants';
+import SettingsManager from './Settings';
 import Controls from './Controls';
+import {
+    PI, GROUND_ACCEL, GROUND_DRAG_COEF, PLAYER_HEIGHT,
+    PLAYER_WIDTH, Y_AXIS, GRAVITY, JUMP_IMPULSE, AIR_ACCEL,
+    AIR_DRAG_COEF, CROUCH_MAG, CROUCH_SPEED, FLY_ACCEL,
+    CROUCH_ACCEL_MULT, PLAYER_EYE_HEIGHT, THIRD_PERSON_DEPTH,
+    WORLD_SIZE
+} from './Constants';
 
 // Move direction mapped by unique combination of forward/backward/left/right keys.
 const dirs = [PI / 4, PI / 2, 3 * PI / 4, 0, 0, PI, -PI / 4, -PI / 2, -3 * PI / 4];
 
+const FIRST_PERSON = 0;
+const THIRD_PERSON_FRONT = 1;
+const THIRD_PERSON_BACK = 2;
+
 export default class Player {
     camera: THREE.PerspectiveCamera;
-    collisionObj: Box3D;
     controls: Controls;
+    settings: SettingsManager;
     objects: Array<Box3D>;
+    material: THREE.MeshBasicMaterial;
+    mesh: THREE.Mesh;
+    collisionObj: Box3D;
 
     object = new THREE.Object3D();
     velocity = new THREE.Vector3();
     position = new THREE.Vector3();
 
+    perspective: number = 0;
+    crouchVal: number = 0;
+
+    IS_FLYING = false;
     ON_GROUND = true;
 
-    get IS_FLYING() {
-        return this.controls.keysDown[6];
-    }
-
-    constructor(camera: THREE.PerspectiveCamera, controls: Controls, objects: Array<Box3D>) {
+    constructor(camera: THREE.PerspectiveCamera, controls: Controls, settings: SettingsManager, objects: Array<Box3D>) {
         this.camera = camera;
         this.controls = controls;
+        this.settings = settings;
         this.objects = objects;
 
         const scale = new THREE.Vector3(PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_WIDTH);
         this.collisionObj = new Box3D(this.position, scale);
 
-        camera.position.y = PLAYER_HEIGHT;
-        this.object.add(camera);
+        controls.registerKeyHandler('G', this.changePerspective.bind(this));
+        controls.registerKeyHandler('F', this.toggleFly.bind(this));
+
+        this.initPlayerObject();
+    }
+
+    initPlayerObject() {
+        const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+        const geometry = new THREE.BoxGeometry(PLAYER_WIDTH, PLAYER_HEIGHT);
+        const mesh = new THREE.Mesh(geometry, material);
+
+        material.colorWrite = false;
+        material.depthWrite = false;
+        mesh.castShadow = true;
+
+        this.object.add(mesh);
+        this.object.add(this.camera);
+
+        this.material = material;
+        this.mesh = mesh;
+    }
+
+    changePerspective(isKeyDown: number) {
+        const { camera, material } = this;
+
+        if (!isKeyDown)
+            return;
+
+        this.perspective = (this.perspective + 1) % 3;
+
+        switch (this.perspective) {
+            case FIRST_PERSON:
+                camera.position.y = 0;
+                material.colorWrite = false;
+                material.depthWrite = false;
+                break;
+
+            case THIRD_PERSON_FRONT:
+                camera.position.y = -THIRD_PERSON_DEPTH;
+                material.colorWrite = true;
+                material.depthWrite = true;
+                break;
+
+            case THIRD_PERSON_BACK:
+                camera.position.y = THIRD_PERSON_DEPTH;
+                material.colorWrite = true;
+                material.depthWrite = true;
+                break;
+        }
+    }
+
+    toggleFly(isKeyDown: number) {
+        if (!isKeyDown)
+            return;
+
+        this.IS_FLYING = !this.IS_FLYING;
+        this.ON_GROUND = false;
+    }
+
+    getAccelConst() {
+        const { controls, settings, IS_FLYING, ON_GROUND } = this;
+        const keybinds = settings.getKeybinds();
+
+        let accel = AIR_ACCEL;
+
+        if (IS_FLYING) {
+            accel = FLY_ACCEL;
+        } else if (ON_GROUND) {
+            accel = GROUND_ACCEL;
+        }
+
+        const isCrouching = controls.isKeyDown(keybinds.CROUCH);
+        if (isCrouching && !IS_FLYING) {
+            accel *= CROUCH_ACCEL_MULT;
+        }
+
+        return accel;
     }
 
     getAcceleration() {
-        const { camera, controls, IS_FLYING, ON_GROUND } = this;
-        const { keysDown } = controls;
+        const { camera, controls, settings, IS_FLYING } = this;
+        const keybinds = settings.getKeybinds();
 
         const moveDir = new THREE.Vector3();
 
-        const forward_backward = keysDown[2] - keysDown[0]; // BACK - FORWARD
-        const left_right = keysDown[3] - keysDown[1]; // RIGHT - LEFT
+        const forward_backward =
+            controls.isKeyDown(keybinds.MOVE_BACKWARD) -
+            controls.isKeyDown(keybinds.MOVE_FORWARD);
+        const left_right =
+            controls.isKeyDown(keybinds.MOVE_RIGHT) -
+            controls.isKeyDown(keybinds.MOVE_LEFT);
 
         if (forward_backward || left_right) {
             // First re-map from range [-1, 1] to range [0, 2]
@@ -65,26 +158,41 @@ export default class Player {
         }
 
         if (IS_FLYING) {
-            const up_down = keysDown[5] - keysDown[4]; // UP - DOWN
+            const up_down =
+                controls.isKeyDown(keybinds.JUMP) -
+                controls.isKeyDown(keybinds.CROUCH);
             moveDir.y = up_down;
         }
 
         // Now we have a vector pointing in the direction
-        // we wish to move in. Set its length to GROUND_ACCEL
-        // and this now represents our acceleration vector.
-        const accel = ON_GROUND ? GROUND_ACCEL : AIR_ACCEL;
-        const acceleration = moveDir.setLength(accel);
+        // we wish to move in. Set its length to 
+        const accelMagnitude = this.getAccelConst();
+        const acceleration = moveDir
+            .setLength(accelMagnitude);
 
         return acceleration;
+    }
+
+    getDragCoefficient() {
+        const { ON_GROUND } = this;
+
+        let dragCoef = AIR_DRAG_COEF;
+
+        if (ON_GROUND) {
+            // TODO: Once proper collision is added, 
+            // have ground drag be a property of the
+            // material the player is standing on.
+            dragCoef = GROUND_DRAG_COEF;
+        }
+
+        return dragCoef;
     }
 
     // Apply drag force proportional to velocity at current time
     // Mass of player is currently implicitly assumed to be 1.
     // F=MA => A=F/M M=1 thus A=F
-    applyFriction(velocity: THREE.Vector3, acceleration: THREE.Vector3) {
-        // TODO: Once proper collision is added, have ground drag be a property
-        // of the material the player is standing on.
-        const dragCoef = this.ON_GROUND ? GROUND_DRAG_COEF : AIR_DRAG_COEF;
+    applyFriction(acceleration: THREE.Vector3, velocity: THREE.Vector3) {
+        const dragCoef = this.getDragCoefficient();
         const dragForce = velocity.clone()
             .negate()
             .multiplyScalar(dragCoef);
@@ -99,24 +207,20 @@ export default class Player {
     // due to the application of a drag force proportional
     // to velocity.
     updatePosition(delta: number) {
-        const { object, position, velocity, ON_GROUND, IS_FLYING } = this;
-        const { keysDown } = this.controls;
+        const { object, position, velocity, controls, settings, ON_GROUND, IS_FLYING } = this;
+        const keybinds = settings.getKeybinds();
 
         // Get acceleration. This is only a function of 
         // the movement keys pressed during this frame. 
         const acceleration = this.getAcceleration();
+        this.applyFriction(acceleration, velocity);
 
-        // Apply friction/drag
-        this.applyFriction(velocity, acceleration);
-
-        // If not on ground and not flying, 
-        // appply gravity.
+        // Don't want gravity if we're on ground 
+        // (it cancels) or flying.
         if (!ON_GROUND && !IS_FLYING)
             acceleration.y -= GRAVITY;
 
-        // If not flying, on ground, and jump key pressed
-        // then apply upward "jump" impulse
-        if (!IS_FLYING && ON_GROUND && keysDown[5]) {
+        if (!IS_FLYING && ON_GROUND && controls.isKeyDown(keybinds.JUMP)) {
             this.velocity.y = JUMP_IMPULSE;
             this.ON_GROUND = false;
         }
@@ -140,9 +244,17 @@ export default class Player {
 
         // Simulate floor
         if (position.y < 0) {
-            this.ON_GROUND = true;
+            if (!IS_FLYING) {
+                this.ON_GROUND = true;
+            }
             position.y = 0;
         }
+
+        const bound = (WORLD_SIZE - 1) / 2;
+
+        const MAX_POS = new THREE.Vector3(bound, bound, bound);
+        const MIN_POS = new THREE.Vector3(-bound, 0, -bound);
+        this.position = position.clamp(MIN_POS, MAX_POS);
 
         // Set player to the new position.
         object.position.copy(position);
@@ -152,14 +264,28 @@ export default class Player {
         // TODO: Use separating axis theorem. 
         // Will add support for OBB and allow
         // for actual collision resolution.
-        for (const object of this.objects) {
-            const collides = object.collides(this.collisionObj);
-            if (collides) console.log('COLLIDES.');
-        }
+
+        // for (const object of this.objects) {
+        // const collides = object.collides(this.collisionObj);
+        // }
     }
 
-    update(delta: number) {
-        this.updatePosition(delta);
+    update(dt: number) {
+        const { settings, controls, camera, mesh, IS_FLYING } = this;
+        const keybinds = settings.getKeybinds();
+
+        const isCrouching = +!IS_FLYING && controls.isKeyDown(keybinds.CROUCH);
+
+        if (isCrouching) {
+            this.crouchVal = Math.min(this.crouchVal + CROUCH_SPEED * dt, CROUCH_MAG);
+        } else {
+            this.crouchVal = Math.max(this.crouchVal - CROUCH_SPEED * dt, 0);
+        }
+
+        camera.position.y = PLAYER_EYE_HEIGHT - this.crouchVal;
+        mesh.scale.y = (1 - this.crouchVal);
+
+        this.updatePosition(dt);
         this.checkCollisions();
     }
 }
