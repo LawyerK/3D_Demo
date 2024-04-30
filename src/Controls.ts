@@ -1,38 +1,101 @@
-import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import * as THREE from 'three';
+import { PI_2 } from './Constants';
+import SettingsManager from './Settings';
 
 type KeydownHandler = (val: number) => void;
 
 export default class Controls {
-    controls: PointerLockControls;
+    domElement: HTMLElement;
+
+    object = new THREE.Object3D();
+    isLocked = false;
+
+    pointerSpeed = 1.0;
+    maxAngle = Math.PI;
+    minAngle = 0;
 
     keyHandlers = new Map<String, KeydownHandler>();
     keysDown = new Map<String, number>();
 
-    constructor(camera: THREE.Camera, renderElem: HTMLElement) {
-        this.controls = new PointerLockControls(camera, renderElem);
-        this.addEventListeners(renderElem);
+    constructor(domElement: HTMLElement) {
+        this.domElement = domElement;
+        this.addEventListeners();
     }
 
-    addEventListeners(renderElem: HTMLElement) {
-        renderElem.addEventListener('click', () => {
-            this.controls.lock();
-        });
+    addEventListeners() {
+        const { domElement } = this;
 
-        this.controls.addEventListener('unlock', () => {
+        domElement.addEventListener('click',
+            () => this.pointerLock(), true
+        );
+
+        document.addEventListener('mousemove',
+            e => this.handleMouse(e), true
+        );
+
+        document.addEventListener('pointerlockchange',
+            e => this.handleStateChange(e), true
+        );
+
+        document.addEventListener('keydown',
+            e => this.handleKey(e, 1), true
+        );
+
+        document.addEventListener('keyup',
+            e => this.handleKey(e, 0), true
+        );
+    }
+
+    pointerLock() {
+        const { domElement } = this;
+        domElement.requestPointerLock();
+    }
+
+    pointerUnlock() {
+        const { ownerDocument } = this.domElement;
+        ownerDocument.exitPointerLock();
+    }
+
+    handleStateChange(e: Event) {
+        this.isLocked =
+            document.pointerLockElement == this.domElement;
+
+        if (!this.isLocked) {
             this.keysDown.forEach((_, key) => {
                 this.keysDown.set(key, 0);
             });
-        });
+        }
+    }
 
-        document.body.addEventListener('keydown', e => this.handleKey(e, 1), true);
-        document.body.addEventListener('keyup', e => this.handleKey(e, 0), true);
+    handleMouse(event: MouseEvent) {
+        const { isLocked, object, pointerSpeed, maxAngle, minAngle } = this;
+        const { movementX, movementY } = event;
+
+        if (!isLocked)
+            return;
+
+        const e = new THREE.Euler(0, 0, 0, 'YXZ');
+
+        e.setFromQuaternion(object.quaternion);
+
+        e.y -= movementX * 0.002 * pointerSpeed;
+        e.x -= movementY * 0.002 * pointerSpeed;
+
+        e.x = Math.max(
+            PI_2 - maxAngle,
+            Math.min(
+                PI_2 - minAngle,
+                e.x
+            )
+        );
+
+        object.quaternion.setFromEuler(e);
     }
 
     handleKey(e: KeyboardEvent, val: number) {
-        const { controls, keysDown } = this;
+        const { isLocked, keysDown } = this;
 
-        if (!controls.isLocked)
+        if (!isLocked)
             return;
 
         const key = e.key.toUpperCase();

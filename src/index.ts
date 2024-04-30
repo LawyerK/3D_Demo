@@ -5,7 +5,7 @@ import Player from './Player';
 import Box3D from './Box3D';
 import Controls from './Controls';
 import SettingsManager from './Settings';
-import { WORLD_SIZE } from './Constants';
+import { PI, SQRT2, SQRT3, WORLD_SIZE } from './Constants';
 
 interface SkyParams {
     turbidity: number;
@@ -23,7 +23,7 @@ class Main {
     // Collision objects
     objects: Array<Box3D> = [];
 
-    controls = new Controls(this.camera, this.renderer.domElement);
+    controls = new Controls(this.renderer.domElement);
     settings = new SettingsManager();
     player = new Player(this.camera, this.controls, this.settings, this.objects);
 
@@ -42,10 +42,10 @@ class Main {
         this.addEventListeners();
         this.initScene();
 
+        this.controls.registerKeyHandler('T', this.toggleDaylightCycle.bind(this));
+
         // Append renderer canvas element to document body
         document.body.appendChild(this.renderer.domElement);
-
-        this.controls.registerKeyHandler('T', this.toggleDaylightCycle.bind(this));
 
         // Begin render loop
         this.render();
@@ -56,7 +56,7 @@ class Main {
             return;
 
         this.runDaylightCycle = !this.runDaylightCycle;
-        this.updateSunPosition(60, 125);
+        this.updateSunPosition(60, 45);
     }
 
     configureRenderer() {
@@ -97,9 +97,7 @@ class Main {
     }
 
     configureShadowCasting(dirLight: THREE.DirectionalLight) {
-        const { scene } = this;
-
-        const HALF_WORLD_SIZE = WORLD_SIZE / 2;
+        // const { scene } = this;
 
         // Set up shadow properties for the light
         dirLight.castShadow = true;
@@ -107,16 +105,20 @@ class Main {
         dirLight.shadow.mapSize.width = 4096;
         dirLight.shadow.mapSize.height = 4096;
 
+        const FAR = WORLD_SIZE * SQRT3;
+
         dirLight.shadow.camera.near = 0.5;
-        dirLight.shadow.camera.far = 2 * WORLD_SIZE;
+        dirLight.shadow.camera.far = FAR;
 
-        dirLight.shadow.camera.left = -HALF_WORLD_SIZE;
-        dirLight.shadow.camera.right = HALF_WORLD_SIZE;
-        dirLight.shadow.camera.top = HALF_WORLD_SIZE;
-        dirLight.shadow.camera.bottom = -HALF_WORLD_SIZE;
+        const AABB = WORLD_SIZE * SQRT2;
 
-        const helper = new THREE.CameraHelper(dirLight.shadow.camera);
-        scene.add(helper);
+        dirLight.shadow.camera.left = -AABB / 2;
+        dirLight.shadow.camera.right = AABB / 2;
+        dirLight.shadow.camera.bottom = -AABB / 2;
+        dirLight.shadow.camera.top = AABB / 2;
+
+        // const helper = new THREE.CameraHelper(dirLight.shadow.camera);
+        // scene.add(helper);
     }
 
     addCube() {
@@ -288,7 +290,10 @@ class Main {
         const theta = THREE.MathUtils.degToRad(azimuth);
 
         uniforms.sunPosition.value.setFromSphericalCoords(1, phi, theta);
-        light.position.setFromSphericalCoords(WORLD_SIZE, phi, theta);
+        light.position.setFromSphericalCoords(
+            SQRT3 * WORLD_SIZE / 2,
+            phi, theta
+        );
     }
 
     lastTime = Date.now()
@@ -309,8 +314,9 @@ class Main {
         this.player.update(dt);
 
         // Simulate daylight cycle. 1 degree per second.
-        if (runDaylightCycle)
-            this.updateSunPosition(now * 0.001, 125);
+        if (runDaylightCycle) {
+            this.updateSunPosition(now * 0.001, 45);
+        }
 
         // Render the scene!
         this.renderer.render(scene, camera);

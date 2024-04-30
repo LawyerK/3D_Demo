@@ -4,18 +4,19 @@ import SettingsManager from './Settings';
 import Controls from './Controls';
 import {
     PI, GROUND_ACCEL, GROUND_DRAG_COEF, PLAYER_HEIGHT,
-    PLAYER_WIDTH, Y_AXIS, GRAVITY, JUMP_IMPULSE, AIR_ACCEL,
+    Y_AXIS, GRAVITY, JUMP_IMPULSE, AIR_ACCEL,
     AIR_DRAG_COEF, CROUCH_MAG, CROUCH_SPEED, FLY_ACCEL,
     CROUCH_ACCEL_MULT, PLAYER_EYE_HEIGHT, THIRD_PERSON_DEPTH,
-    WORLD_SIZE
+    WORLD_SIZE, PLAYER_HALF_WIDTH,
+    CROUCH_JUMP_MULT
 } from './Constants';
 
 // Move direction mapped by unique combination of forward/backward/left/right keys.
 const dirs = [PI / 4, PI / 2, 3 * PI / 4, 0, 0, PI, -PI / 4, -PI / 2, -3 * PI / 4];
 
 const FIRST_PERSON = 0;
-const THIRD_PERSON_FRONT = 1;
-const THIRD_PERSON_BACK = 2;
+// const THIRD_PERSON_FRONT = 1;
+const THIRD_PERSON_BACK = 1; //2;
 
 export default class Player {
     camera: THREE.PerspectiveCamera;
@@ -42,7 +43,7 @@ export default class Player {
         this.settings = settings;
         this.objects = objects;
 
-        const scale = new THREE.Vector3(PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_WIDTH);
+        const scale = new THREE.Vector3(PLAYER_HALF_WIDTH, PLAYER_HEIGHT / 2, PLAYER_HALF_WIDTH);
         this.collisionObj = new Box3D(this.position, scale);
 
         controls.registerKeyHandler('G', this.changePerspective.bind(this));
@@ -52,16 +53,25 @@ export default class Player {
     }
 
     initPlayerObject() {
+        const { object, controls, camera } = this;
+        const { object: controlsObject } = controls;
+
         const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-        const geometry = new THREE.BoxGeometry(PLAYER_WIDTH, PLAYER_HEIGHT);
+        const geometry = new THREE.BoxGeometry(
+            2 * PLAYER_HALF_WIDTH,
+            PLAYER_HEIGHT,
+            2 * PLAYER_HALF_WIDTH
+        );
         const mesh = new THREE.Mesh(geometry, material);
 
+        geometry.translate(0, PLAYER_HEIGHT / 2, 0);
         material.colorWrite = false;
         material.depthWrite = false;
         mesh.castShadow = true;
 
-        this.object.add(mesh);
-        this.object.add(this.camera);
+        controlsObject.add(camera);
+        object.add(controlsObject);
+        object.add(mesh);
 
         this.material = material;
         this.mesh = mesh;
@@ -73,23 +83,26 @@ export default class Player {
         if (!isKeyDown)
             return;
 
-        this.perspective = (this.perspective + 1) % 3;
+        this.perspective = (this.perspective + 1) % 2; //3;
 
         switch (this.perspective) {
             case FIRST_PERSON:
-                camera.position.y = 0;
+                camera.position.z = 0;
+                camera.rotation.y = 0;
                 material.colorWrite = false;
                 material.depthWrite = false;
                 break;
 
-            case THIRD_PERSON_FRONT:
-                camera.position.y = -THIRD_PERSON_DEPTH;
-                material.colorWrite = true;
-                material.depthWrite = true;
-                break;
+            // case THIRD_PERSON_FRONT:
+            //     camera.position.z = -THIRD_PERSON_DEPTH;
+            //     camera.rotation.y = Math.PI;
+            //     material.colorWrite = true;
+            //     material.depthWrite = true;
+            //     break;
 
             case THIRD_PERSON_BACK:
-                camera.position.y = THIRD_PERSON_DEPTH;
+                camera.position.z = THIRD_PERSON_DEPTH;
+                camera.rotation.y = 0;
                 material.colorWrite = true;
                 material.depthWrite = true;
                 break;
@@ -220,8 +233,12 @@ export default class Player {
         if (!ON_GROUND && !IS_FLYING)
             acceleration.y -= GRAVITY;
 
-        if (!IS_FLYING && ON_GROUND && controls.isKeyDown(keybinds.JUMP)) {
-            this.velocity.y = JUMP_IMPULSE;
+        const crouchDown = controls.isKeyDown(keybinds.CROUCH);
+        const jumpDown = controls.isKeyDown(keybinds.JUMP);
+
+        if (!IS_FLYING && ON_GROUND && jumpDown) {
+            const jumpMult = crouchDown ? CROUCH_JUMP_MULT : 1;
+            this.velocity.y = JUMP_IMPULSE * jumpMult;
             this.ON_GROUND = false;
         }
 
@@ -250,10 +267,12 @@ export default class Player {
             position.y = 0;
         }
 
-        const bound = (WORLD_SIZE - 1) / 2;
-
-        const MAX_POS = new THREE.Vector3(bound, bound, bound);
-        const MIN_POS = new THREE.Vector3(-bound, 0, -bound);
+        // Keep player inside world borders
+        // Center of player is at feet level!
+        const boundX = WORLD_SIZE / 2 - PLAYER_HALF_WIDTH;
+        const boundY = WORLD_SIZE / 2 - PLAYER_HEIGHT;
+        const MAX_POS = new THREE.Vector3(boundX, boundY, boundX);
+        const MIN_POS = new THREE.Vector3(-boundX, 0, -boundX);
         this.position = position.clamp(MIN_POS, MAX_POS);
 
         // Set player to the new position.
@@ -271,7 +290,8 @@ export default class Player {
     }
 
     update(dt: number) {
-        const { settings, controls, camera, mesh, IS_FLYING } = this;
+        const { settings, controls, mesh, IS_FLYING } = this;
+        const { object: controlsObject } = controls;
         const keybinds = settings.getKeybinds();
 
         const isCrouching = +!IS_FLYING && controls.isKeyDown(keybinds.CROUCH);
@@ -282,8 +302,8 @@ export default class Player {
             this.crouchVal = Math.max(this.crouchVal - CROUCH_SPEED * dt, 0);
         }
 
-        camera.position.y = PLAYER_EYE_HEIGHT - this.crouchVal;
-        mesh.scale.y = (1 - this.crouchVal);
+        controlsObject.position.y = PLAYER_EYE_HEIGHT - this.crouchVal;
+        mesh.scale.y = (1 - this.crouchVal / PLAYER_HEIGHT);
 
         this.updatePosition(dt);
         this.checkCollisions();
