@@ -2,10 +2,10 @@ import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import * as THREE from 'three';
 import Player from './Player';
-import Box3D from './Box3D';
 import Controls from './Controls';
 import SettingsManager from './Settings';
-import { PI, SQRT2, SQRT3, WORLD_SIZE } from './Constants';
+import { SQRT2, SQRT3, WORLD_SIZE } from './Constants';
+import MapObject from './MapObject';
 
 interface SkyParams {
     turbidity: number;
@@ -17,37 +17,37 @@ interface SkyParams {
 
 class Main {
     renderer = new THREE.WebGLRenderer({ antialias: true });
-    camera = new THREE.PerspectiveCamera(70, 0.01, 1, 1000);
+    camera = new THREE.PerspectiveCamera(70, 0, 0.1, 1000);
     scene = new THREE.Scene();
 
-    // Collision objects
-    objects: Array<Box3D> = [];
+    objects: Array<MapObject> = [];
 
     controls = new Controls(this.renderer.domElement);
     settings = new SettingsManager();
     player = new Player(this.camera, this.controls, this.settings, this.objects);
 
-    // Initialized by initScene()
+    /* Possibly temporary */
+    runDaylightCycle = true;
+
+    /* Initialized by initScene() */
     light: THREE.DirectionalLight;
     sky: Sky;
 
-    // Possibly temporary
-    runDaylightCycle = true;
-
     constructor() {
+        const { renderer, scene, controls, player } = this;
+
         // Must add the player object to scene
-        this.scene.add(this.player.object);
+        scene.add(player.object);
+
+        controls.registerKeyHandler('T', this.toggleDaylightCycle.bind(this));
 
         this.configureRenderer();
         this.addEventListeners();
         this.initScene();
 
-        this.controls.registerKeyHandler('T', this.toggleDaylightCycle.bind(this));
-
-        // Append renderer canvas element to document body
-        document.body.appendChild(this.renderer.domElement);
-
-        // Begin render loop
+        /* Append renderer canvas element to document body */
+        document.body.appendChild(renderer.domElement);
+        /* Begin render loop */
         this.render();
     }
 
@@ -72,7 +72,7 @@ class Main {
     }
 
     addEventListeners() {
-        // Handle window resize
+        /* Handle window resize */
         window.addEventListener('resize', this.handleResize.bind(this));
         this.handleResize();
     }
@@ -87,7 +87,7 @@ class Main {
     addLights() {
         const { scene } = this;
 
-        // Add directional light
+        /* Add directional light */
         const dirLight = this.light = new THREE.DirectionalLight(0xffffff);
         this.configureShadowCasting(dirLight);
         scene.add(dirLight);
@@ -99,7 +99,7 @@ class Main {
     configureShadowCasting(dirLight: THREE.DirectionalLight) {
         // const { scene } = this;
 
-        // Set up shadow properties for the light
+        /* Set up shadow properties for the light */
         dirLight.castShadow = true;
 
         dirLight.shadow.mapSize.width = 4096;
@@ -122,16 +122,21 @@ class Main {
     }
 
     addCube() {
-        const { scene } = this;
+        const { scene, objects } = this;
 
         const material = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide });
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const geometry = new THREE.BoxGeometry(0.75, 0.75, 0.75);
+        geometry.computeBoundingSphere();
 
         const cube = new THREE.Mesh(geometry, material);
-        cube.position.y += 0.5;
+        cube.position.y += 0.75 / 2;
         cube.position.z -= 5;
         cube.castShadow = true;
         scene.add(cube);
+
+        const size = new THREE.Vector3(0.75 / 2, 0.75 / 2, 0.75 / 2);
+        const obj = new MapObject(cube.position, size);
+        objects.push(obj);
 
         const texLoader = new THREE.TextureLoader();
 
@@ -168,22 +173,19 @@ class Main {
             material.roughnessMap = roughMap;
             material.roughness = 1;
 
-            // Force an update of the material
-            // so it renders with the new tex's
+            /* Force an update of the material
+             * so it renders with the new tex's */
             material.needsUpdate = true;
         })().catch(error => {
             alert('Error loading cube textures: ' + error);
             console.trace(error);
         });
-
-        const cubeCol = new Box3D(cube.position, new THREE.Vector3(1, 1, 1));
-        this.objects.push(cubeCol);
     }
 
     addFloor() {
-        const { scene } = this;
+        const { scene, objects } = this;
 
-        const material = new THREE.MeshLambertMaterial({ side: THREE.FrontSide });
+        const material = new THREE.MeshStandardMaterial({ side: THREE.FrontSide });
         const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 1, 1);
         const plane = new THREE.Mesh(geometry, material);
 
@@ -191,9 +193,13 @@ class Main {
         plane.receiveShadow = true;
         scene.add(plane);
 
-        // Asynchronously load in textures
-        // It is fine to continue along with
-        // other stuff while these load in.
+        const size = new THREE.Vector3(WORLD_SIZE / 2, 0, WORLD_SIZE / 2);
+        const aabb = new MapObject(plane.position, size);
+        objects.push(aabb);
+
+        /* Asynchronously load in textures
+         * It is fine to continue along with
+         * other stuff while these load in. */
 
         const texLoader = new THREE.TextureLoader();
         const exrLoader = new EXRLoader();
@@ -210,17 +216,11 @@ class Main {
             material.map = diffuseMap;
             applyRepeat(diffuseMap);
 
-            const displMap = await texLoader.loadAsync(
-                './assets/brick/t_brick_floor_002_displacement_1k.png'
-            )
-            material.displacementMap = displMap;
-            applyRepeat(displMap);
-
-            const roughMap = await texLoader.loadAsync(
-                './assets/brick/t_brick_floor_002_rough_1k.jpg'
-            );
-            material.bumpMap = roughMap;
-            applyRepeat(roughMap);
+            // const displMap = await texLoader.loadAsync(
+            //     './assets/brick/t_brick_floor_002_displacement_1k.png'
+            // )
+            // material.displacementMap = displMap;
+            // applyRepeat(displMap);
 
             const normMap = await exrLoader.loadAsync(
                 './assets/brick/t_brick_floor_002_nor_gl_1k.exr'
@@ -228,14 +228,15 @@ class Main {
             material.normalMap = normMap;
             applyRepeat(normMap);
 
-            // Force an update of the material
-            // so it renders with the new tex's
-            material.needsUpdate = true;
+            const roughMap = await texLoader.loadAsync(
+                './assets/brick/t_brick_floor_002_rough_1k.jpg'
+            );
+            material.roughnessMap = roughMap;
+            applyRepeat(roughMap);
 
-            // The displacement map seems to be centered at 0.5
-            // with +/- 0.5 which is unfortunate. This line
-            // compensates for it with code.
-            plane.position.y = -0.5;
+            /* Force an update of the material
+             * so it renders with the new tex's */
+            material.needsUpdate = true;
         })().catch(error => {
             alert('Error loading floor textures: ' + error);
             console.trace(error);
@@ -261,8 +262,8 @@ class Main {
     }
 
     initScene() {
-        // Note: Sun/light position is set
-        // every frame in the render loop
+        /* Note: Sun/light position is set
+         * every frame in the render loop */
 
         this.addLights();
         this.addSky();
@@ -301,24 +302,24 @@ class Main {
     render() {
         const { camera, scene, runDaylightCycle } = this;
 
-        // Go ahead and queue the next frame
-        // JavaScript is single-threaded/synchronous
+        /* Go ahead and queue the next frame
+         * JavaScript is single-threaded/synchronous */
         requestAnimationFrame(this.render.bind(this));
 
-        // Very important - calculate time between frames
+        /* Very important - calculate time between frames */
         const now = Date.now();
         const dt = now - this.lastTime;
         this.lastTime = now;
 
-        // Update all player related things
+        /* Update all player related things */
         this.player.update(dt);
 
-        // Simulate daylight cycle. 1 degree per second.
+        /* Simulate daylight cycle. 1 degree per second. */
         if (runDaylightCycle) {
             this.updateSunPosition(now * 0.001, 45);
         }
 
-        // Render the scene!
+        /* Render the scene! */
         this.renderer.render(scene, camera);
     }
 }

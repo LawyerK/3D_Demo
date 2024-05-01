@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { PI_2 } from './Constants';
-import SettingsManager from './Settings';
 
 type KeydownHandler = (val: number) => void;
 
@@ -34,7 +33,7 @@ export default class Controls {
         );
 
         document.addEventListener('pointerlockchange',
-            e => this.handleStateChange(e), true
+            e => this.handleChange(e), true
         );
 
         document.addEventListener('keydown',
@@ -56,7 +55,7 @@ export default class Controls {
         ownerDocument.exitPointerLock();
     }
 
-    handleStateChange(e: Event) {
+    handleChange(e: Event) {
         this.isLocked =
             document.pointerLockElement == this.domElement;
 

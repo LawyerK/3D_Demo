@@ -9,7 +9,7 @@ export const TAU = 2 * PI;
 
 export const WORLD_SIZE = 50;
 
-export const PLAYER_HALF_WIDTH = 0.25;
+export const PLAYER_HALF_WIDTH = 0.3;
 export const PLAYER_HEIGHT = 2;
 export const PLAYER_EYE_HEIGHT = 1.75;
 
