@@ -8,8 +8,10 @@ export default class Controls {
 
     object = new THREE.Object3D();
     isLocked = false;
+    wheel = 1.0;
 
     pointerSpeed = 1.0;
+    wheelSpeed = 1.0;
     maxAngle = Math.PI;
     minAngle = 0;
 
@@ -30,6 +32,10 @@ export default class Controls {
 
         document.addEventListener('mousemove',
             e => this.handleMouse(e), true
+        );
+
+        document.addEventListener('wheel',
+            e => this.handleWheel(e), true
         );
 
         document.addEventListener('pointerlockchange',
@@ -89,6 +95,20 @@ export default class Controls {
         );
 
         object.quaternion.setFromEuler(e);
+    }
+
+    handleWheel(e: WheelEvent) {
+        const { isLocked, wheelSpeed } = this;
+        const { deltaY } = e;
+
+        if (!isLocked)
+            return;
+
+        this.wheel = Math.max(
+            Math.min(
+                this.wheel + deltaY * 0.002 * wheelSpeed
+            ), 0
+        );
     }
 
     handleKey(e: KeyboardEvent, val: number) {

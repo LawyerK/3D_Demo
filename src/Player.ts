@@ -2,12 +2,15 @@ import * as THREE from 'three';
 import SettingsManager from './Settings';
 import Controls from './Controls';
 import {
-    PI, GROUND_ACCEL, GROUND_DRAG_COEF, PLAYER_HEIGHT,
+    PI, PLAYER_HEIGHT,
     Y_AXIS, GRAVITY, JUMP_IMPULSE, AIR_ACCEL,
-    AIR_DRAG_COEF, CROUCH_MAG, CROUCH_SPEED, FLY_ACCEL,
+    AIR_DRAG, CROUCH_MAG, CROUCH_SPEED, FLY_ACCEL,
     CROUCH_ACCEL_MULT, PLAYER_EYE_HEIGHT, THIRD_PERSON_DEPTH,
     WORLD_SIZE, PLAYER_HALF_WIDTH,
-    CROUCH_JUMP_MULT
+    CROUCH_JUMP_MULT,
+    ORTHOGONAL_PROJECT,
+    DEFAULT_DRAG,
+    DEFAULT_ACCEL
 } from './Constants';
 import MapObject from './MapObject';
 
@@ -37,10 +40,13 @@ export default class Player {
     position = new THREE.Vector3();
 
     size = new THREE.Vector3(PLAYER_HALF_WIDTH, PLAYER_HEIGHT / 2, PLAYER_HALF_WIDTH);
-    aabb = new MapObject(this.position, this.size);
+    collider = new MapObject(new THREE.Vector3(), this.size);
 
     perspective: number = 0;
     crouchVal: number = 0;
+
+    groundAccelCoef: number = DEFAULT_ACCEL;
+    groundDragCoef: number = DEFAULT_DRAG;
 
     IS_FLYING = false;
     ON_GROUND = true;
@@ -109,7 +115,6 @@ export default class Player {
             return;
 
         this.IS_FLYING = !this.IS_FLYING;
-        this.ON_GROUND = false;
     }
 
     getAccelConst() {
@@ -121,7 +126,7 @@ export default class Player {
         if (IS_FLYING) {
             accel = FLY_ACCEL;
         } else if (ON_GROUND) {
-            accel = GROUND_ACCEL;
+            accel = this.groundAccelCoef;
         }
 
         const isCrouching = controls.isKeyDown(keybinds.CROUCH);
@@ -182,15 +187,12 @@ export default class Player {
     }
 
     getDragCoefficient() {
-        const { ON_GROUND } = this;
+        const { IS_FLYING, ON_GROUND } = this;
 
-        let dragCoef = AIR_DRAG_COEF;
+        let dragCoef = AIR_DRAG;
 
-        if (ON_GROUND) {
-            /* TODO: Once proper collision is added, 
-             * have ground drag be a property of the
-             * material the player is standing on. */
-            dragCoef = GROUND_DRAG_COEF;
+        if (!IS_FLYING && ON_GROUND) {
+            dragCoef = this.groundDragCoef;
         }
 
         return dragCoef;
@@ -199,7 +201,7 @@ export default class Player {
     /* Apply drag force proportional to velocity at current time
      * Mass of player is currently implicitly assumed to be 1.
      * F=MA => A=F/M M=1 thus A=F */
-    applyFriction(acceleration: THREE.Vector3, velocity: THREE.Vector3) {
+    applyDrag(acceleration: THREE.Vector3, velocity: THREE.Vector3) {
         const dragCoef = this.getDragCoefficient();
         const dragForce = velocity.clone()
             .negate()
@@ -213,18 +215,15 @@ export default class Player {
 
     /* These kinematics equations are technically not valid
      * due to the application of a drag force proportional
-     * to velocity.
-     * TODO: Experiment with how wrong they are. 
-     * Consider switching to some basic exponential
-     * decay on velocity. */
-    updatePosition(delta: number) {
-        const { object, position, velocity, controls, settings, ON_GROUND, IS_FLYING } = this;
+     * to velocity. */
+    updatePosition(dt: number) {
+        const { position, velocity, size, controls, settings, ON_GROUND, IS_FLYING } = this;
         const keybinds = settings.getKeybinds();
 
         /* Get acceleration. This is only a function of 
          * the movement keys pressed during this frame. */
         const acceleration = this.getAcceleration();
-        this.applyFriction(acceleration, velocity);
+        this.applyDrag(acceleration, velocity);
 
         /* Don't want gravity if flying. */
         if (!IS_FLYING)
@@ -242,10 +241,10 @@ export default class Player {
         /* Calculate final position via
          * x(t) = x0 + v*t + 0.5*a*t^2 */
         const deltaPos = velocity.clone()
-            .multiplyScalar(delta)
+            .multiplyScalar(dt)
             .add(
                 acceleration.clone()
-                    .multiplyScalar(0.5 * delta ** 2)
+                    .multiplyScalar(0.5 * dt ** 2)
             );
         position.add(deltaPos);
 
@@ -253,85 +252,61 @@ export default class Player {
          * formula v(t) = v0 + a*t */
         velocity.add(
             acceleration.clone()
-                .multiplyScalar(delta)
+                .multiplyScalar(dt)
         );
-
-        /* Keep player inside world borders
-         * Center of player is at feet level! */
-        const boundX = WORLD_SIZE / 2 - PLAYER_HALF_WIDTH;
-        const boundY = WORLD_SIZE / 2 - PLAYER_HEIGHT;
-        const MAX_POS = new THREE.Vector3(boundX, boundY, boundX);
-        const MIN_POS = new THREE.Vector3(-boundX, -0.001, -boundX);
-        this.position = position.clamp(MIN_POS, MAX_POS);
     }
 
     handleCollisions() {
-        const { objects, position, velocity, size } = this;
+        const { objects, position, velocity } = this;
 
-        const test = (vec: THREE.Vector3) =>
-            vec.x > 0 && vec.y > 0 && vec.z > 0;
-
-        const theirMax = new THREE.Vector3(),
-            ourMax = new THREE.Vector3(),
-            theirMin = new THREE.Vector3(),
-            ourMin = new THREE.Vector3(),
-            test1 = new THREE.Vector3(),
-            test2 = new THREE.Vector3();
-
-        /* Player positition is at feet level.
-         * We want this at our center point
-         * for collision resolution. */
-        const ourPosition = position.clone()
-            .add(new THREE.Vector3(0, size.y, 0));
+        /* We are not on the ground UNLESS we
+         * are colliding with an object 
+         * in the y-direction. */
+        this.ON_GROUND = false;
 
         for (const object of objects) {
-            theirMin.copy(object.position).sub(object.size);
-            theirMax.copy(object.position).add(object.size);
-            ourMax.copy(ourPosition).add(size);
-            ourMin.copy(ourPosition).sub(size);
-
-            test1.copy(ourMax).sub(theirMin);
-            test2.copy(theirMax).sub(ourMin);
-
-            /* We can only be considered colliding if
-             * ALL tests show that we are colliding.
-             * This is the "separating axis theorem." */
-            const collides = test(test1) && test(test2);
+            const [collides, offset] = this.collider.SAT(object);
 
             if (collides) {
-                /* Resolving the collision is as simple as
-                 * finding which yielded the smallest distance */
-                const vals = [
-                    test1.x, test1.y, test1.z,
-                    test2.x, test2.y, test2.z
-                ];
-                const signs = [-1, -1, -1, 1, 1, 1];
-                const keys = [0, 1, 2, 0, 1, 2];
+                position.add(offset);
+                velocity.sub(ORTHOGONAL_PROJECT(velocity, offset));
 
-                let smallestIndex = 0;
-                let smallestVal = Infinity;
-
-                for (let i = 0; i < 6; i++) {
-                    if (vals[i] < smallestVal) {
-                        smallestVal = vals[i];
-                        smallestIndex = i;
-                    }
-                }
-
-                const sign = signs[smallestIndex];
-                const key = keys[smallestIndex];
-
-                if (smallestIndex == 1 || smallestIndex == 4) {
+                if (offset.y > 0) {
+                    this.groundAccelCoef = object.properties.accelCoef;
+                    this.groundDragCoef = object.properties.dragCoef;
                     this.ON_GROUND = true;
                 }
-
-                position.setComponent(key,
-                    position.getComponent(key) + sign * smallestVal
-                );
-
-                velocity.setComponent(key, 0);
             }
         }
+    }
+
+    enforceWorldBounds() {
+        const boundX = WORLD_SIZE / 2 - PLAYER_HALF_WIDTH;
+        const boundY = WORLD_SIZE / 2 - PLAYER_HEIGHT;
+        const MAX_POS = new THREE.Vector3(boundX, boundY, boundX);
+        const MIN_POS = new THREE.Vector3(-boundX, 0, -boundX);
+        this.position = this.position.clamp(MIN_POS, MAX_POS);
+
+        /* Teporary fix. Continuous collision
+         * detection is the proper fix.
+         * TODO: Do that ^. */
+        if (this.position.y == 0) {
+            this.ON_GROUND = true;
+            this.velocity.y = 0;
+        }
+    }
+
+    updateColliderPosition() {
+        const { position, size } = this;
+
+        /* Ideally the AABB just inherits our
+         * position vector. However, we are 
+         * centered at our feet vertically
+         * and the AABB expects us to be
+         * centered at the middle. So, just
+         * copy it and adjust for that.  */
+        this.collider.position.copy(position);
+        this.collider.position.y += size.y;
     }
 
     update(dt: number) {
@@ -359,7 +334,9 @@ export default class Player {
         size.y = (PLAYER_HEIGHT - this.crouchVal) / 2;
 
         this.updatePosition(dt);
+        this.updateColliderPosition();
         this.handleCollisions();
+        this.enforceWorldBounds();
 
         /* Set player to the new position. */
         object.position.copy(position);

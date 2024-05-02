@@ -1,11 +1,11 @@
-import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import * as THREE from 'three';
 import Player from './Player';
 import Controls from './Controls';
 import SettingsManager from './Settings';
-import { SQRT2, SQRT3, WORLD_SIZE } from './Constants';
+import { PLAYER_HALF_WIDTH, SQRT2, SQRT3, WORLD_SIZE } from './Constants';
 import MapObject from './MapObject';
+import * as Materials from './Materials';
 
 interface SkyParams {
     turbidity: number;
@@ -34,7 +34,7 @@ class Main {
     sky: Sky;
 
     constructor() {
-        const { renderer, scene, controls, player } = this;
+        const { scene, controls, player } = this;
 
         // Must add the player object to scene
         scene.add(player.object);
@@ -44,6 +44,16 @@ class Main {
         this.configureRenderer();
         this.addEventListeners();
         this.initScene();
+        this.begin();
+
+        // this.debug_runPhysicsTests();
+    }
+
+    async begin() {
+        const { renderer } = this;
+
+        /* Load in all textures/materials */
+        await Materials.load();
 
         /* Append renderer canvas element to document body */
         document.body.appendChild(renderer.domElement);
@@ -51,12 +61,44 @@ class Main {
         this.render();
     }
 
+    /* Physics simulation should be independent of the number
+     * of discrete timesteps used. This tests that this
+     * is at least *mostly* the case. Proper solutions
+     * of the DE including drag force are complicated.
+     * It turns out that for anything beyond 2 discrete
+     * timesteps per second (2FPS) the way things are
+     * done now is actually a pretty decent approximation
+     * Between [5, 100] FPS the difference in position 
+     * is only 0.3 units! */
+    debug_runPhysicsTests() {
+        const { player, controls, settings } = this;
+        const keybinds = settings.getKeybinds();
+
+        controls.keysDown.set(keybinds.MOVE_FORWARD, 1);
+
+        // number of steps
+        for (let i = 1; i < 100; i++) {
+            player.position.set(0, 0, WORLD_SIZE / 2 - PLAYER_HALF_WIDTH);
+            player.velocity.set(0, 0, 0);
+
+            const dt = 1000 / i;
+
+            console.log(`---- ${i} discrete steps where dt=${dt}`);
+
+            for (let j = 0; j < i; j++) {
+                player.update(dt);
+            }
+
+            console.log(player.position.z);
+        }
+    }
+
     toggleDaylightCycle(isKeydown: number) {
         if (!isKeydown)
             return;
 
         this.runDaylightCycle = !this.runDaylightCycle;
-        this.updateSunPosition(60, 45);
+        this.updateSunPosition(10, 45);
     }
 
     configureRenderer() {
@@ -64,8 +106,7 @@ class Main {
 
         renderer.setPixelRatio(window.devicePixelRatio);
 
-        renderer.toneMapping = THREE.LinearToneMapping;
-        renderer.toneMappingExposure = 0.5;
+        renderer.toneMapping = THREE.CineonToneMapping;
 
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -124,70 +165,27 @@ class Main {
     addCube() {
         const { scene, objects } = this;
 
-        const material = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide });
-        const geometry = new THREE.BoxGeometry(0.75, 0.75, 0.75);
+        const geometry = new THREE.BoxGeometry(10, 10, 10);
         geometry.computeBoundingSphere();
 
-        const cube = new THREE.Mesh(geometry, material);
-        cube.position.y += 0.75 / 2;
-        cube.position.z -= 5;
+        const cube = new THREE.Mesh(geometry, Materials.METAL_MATERIAL);
+        cube.rotateX(Math.PI / 4);
+        cube.rotateY(Math.PI / 8);
+        cube.position.z -= 12;
+        cube.position.y -= 2;
         cube.castShadow = true;
         scene.add(cube);
 
-        const size = new THREE.Vector3(0.75 / 2, 0.75 / 2, 0.75 / 2);
-        const obj = new MapObject(cube.position, size);
+        const size = new THREE.Vector3(5, 5, 5);
+        const obj = new MapObject(cube.position, size, cube.quaternion);
         objects.push(obj);
-
-        const texLoader = new THREE.TextureLoader();
-
-        (async () => {
-            const aoMap = await texLoader.loadAsync(
-                './assets/metal/Metal_006_ambientOcclusion.jpg'
-            );
-            material.aoMap = aoMap;
-
-            const diffuseMap = await texLoader.loadAsync(
-                './assets/metal/Metal_006_basecolor.jpg'
-            );
-            material.map = diffuseMap;
-
-            // const heightMap = await texLoader.loadAsync(
-            //     './assets/metal/Metal_006_height.png'
-            // )
-            // material.displacementMap = heightMap;
-
-            const metalMap = await texLoader.loadAsync(
-                './assets/metal/Metal_006_normal.jpg'
-            );
-            material.metalnessMap = metalMap;
-            material.metalness = 0.4;
-
-            const normMap = await texLoader.loadAsync(
-                './assets/metal/Metal_006_normal.jpg'
-            );
-            material.normalMap = normMap;
-
-            const roughMap = await texLoader.loadAsync(
-                './assets/metal/Metal_006_roughness.jpg'
-            );
-            material.roughnessMap = roughMap;
-            material.roughness = 1;
-
-            /* Force an update of the material
-             * so it renders with the new tex's */
-            material.needsUpdate = true;
-        })().catch(error => {
-            alert('Error loading cube textures: ' + error);
-            console.trace(error);
-        });
     }
 
     addFloor() {
         const { scene, objects } = this;
 
-        const material = new THREE.MeshStandardMaterial({ side: THREE.FrontSide });
         const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 1, 1);
-        const plane = new THREE.Mesh(geometry, material);
+        const plane = new THREE.Mesh(geometry, Materials.BRICK_MATERIAL);
 
         plane.rotateX(-Math.PI / 2);
         plane.receiveShadow = true;
@@ -196,51 +194,6 @@ class Main {
         const size = new THREE.Vector3(WORLD_SIZE / 2, 0, WORLD_SIZE / 2);
         const aabb = new MapObject(plane.position, size);
         objects.push(aabb);
-
-        /* Asynchronously load in textures
-         * It is fine to continue along with
-         * other stuff while these load in. */
-
-        const texLoader = new THREE.TextureLoader();
-        const exrLoader = new EXRLoader();
-
-        (async () => {
-            const applyRepeat = (tex: THREE.Texture) => {
-                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-                tex.repeat.set(WORLD_SIZE / 5, WORLD_SIZE / 5);
-            }
-
-            const diffuseMap = await texLoader.loadAsync(
-                './assets/brick/t_brick_floor_002_diffuse_1k.jpg'
-            );
-            material.map = diffuseMap;
-            applyRepeat(diffuseMap);
-
-            // const displMap = await texLoader.loadAsync(
-            //     './assets/brick/t_brick_floor_002_displacement_1k.png'
-            // )
-            // material.displacementMap = displMap;
-            // applyRepeat(displMap);
-
-            const normMap = await exrLoader.loadAsync(
-                './assets/brick/t_brick_floor_002_nor_gl_1k.exr'
-            );
-            material.normalMap = normMap;
-            applyRepeat(normMap);
-
-            const roughMap = await texLoader.loadAsync(
-                './assets/brick/t_brick_floor_002_rough_1k.jpg'
-            );
-            material.roughnessMap = roughMap;
-            applyRepeat(roughMap);
-
-            /* Force an update of the material
-             * so it renders with the new tex's */
-            material.needsUpdate = true;
-        })().catch(error => {
-            alert('Error loading floor textures: ' + error);
-            console.trace(error);
-        });
     }
 
     addSky() {
@@ -300,7 +253,7 @@ class Main {
     lastTime = Date.now()
 
     render() {
-        const { camera, scene, runDaylightCycle } = this;
+        const { renderer, scene, camera, runDaylightCycle } = this;
 
         /* Go ahead and queue the next frame
          * JavaScript is single-threaded/synchronous */
@@ -308,7 +261,14 @@ class Main {
 
         /* Very important - calculate time between frames */
         const now = Date.now();
-        const dt = now - this.lastTime;
+        const dt = Math.max(
+            /* Don't allow a timestep for anything lower than 5FPS.
+             * And don't allow negative timesteps. */
+            Math.min(
+                now - this.lastTime,
+                1000 / 5
+            ), 0
+        );
         this.lastTime = now;
 
         /* Update all player related things */
@@ -320,7 +280,7 @@ class Main {
         }
 
         /* Render the scene! */
-        this.renderer.render(scene, camera);
+        renderer.render(scene, camera);
     }
 }
 
