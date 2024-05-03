@@ -4,18 +4,18 @@ import { PI_2 } from './Constants';
 type KeydownHandler = (val: number) => void;
 
 export default class Controls {
-    domElement: HTMLElement;
+    private domElement: HTMLElement;
 
-    object = new THREE.Object3D();
-    isLocked = false;
-    wheel = 1.0;
+    private object = new THREE.Object3D();
+    public isLocked = false;
+    private wheel = 1.0;
 
-    pointerSpeed = 1.0;
-    wheelSpeed = 1.0;
-    maxAngle = Math.PI;
-    minAngle = 0;
+    private pointerSpeed = 1.0;
+    private wheelSpeed = 1.0;
+    private maxAngle = Math.PI;
+    private minAngle = 0;
 
-    keyHandlers = new Map<String, KeydownHandler>();
+    private keyHandlers = new Map<String, KeydownHandler>();
     keysDown = new Map<String, number>();
 
     constructor(domElement: HTMLElement) {
@@ -135,5 +135,9 @@ export default class Controls {
 
     isKeyDown(key: String) {
         return this.keysDown.get(key) || 0;
+    }
+
+    getObject(): THREE.Object3D {
+        return this.object;
     }
 }

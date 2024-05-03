@@ -9,33 +9,51 @@ export const TAU = 2 * PI;
 
 export const WORLD_SIZE = 50;
 
-export const PLAYER_HALF_WIDTH = 0.3;
+export const PLAYER_WIDTH = 0.6;
 export const PLAYER_HEIGHT = 2;
-export const PLAYER_EYE_HEIGHT = 1.75;
+export const PLAYER_EYE_OFFSET = 0.25;
 
 export const THIRD_PERSON_DEPTH = 5;
 
 export const CROUCH_SPEED = 0.0025;
 export const CROUCH_MAG = 0.5;
-export const CROUCH_ACCEL_MULT = 0.5;
+export const CROUCH_MOVE_MULT = 0.5;
 export const CROUCH_JUMP_MULT = 0.9;
 
-export const DEFAULT_ACCEL = 0.00003;
-export const DEFAULT_DRAG = 0.008;
+export const MAX_SLOPE = 0.2;
 
-export const AIR_ACCEL = 0.00001;
-export const FLY_ACCEL = 0.00005;
+/* Physics constants */
 
-export const JUMP_IMPULSE = 0.005;
-export const AIR_DRAG = 0.004;
-export const GRAVITY = 0.000015;
+export const GRAVITY = new THREE.Vector3(0, -1.5 / 1e5, 0);
+export const PLAYER_MASS = 1;
 
-export function IS_VECTOR_ZERO(vec: THREE.Vector3) {
-    return vec.x == 0 && vec.y == 0 && vec.z == 0;
+export const GROUND_MOVE = 3 / 1e5;
+export const AIR_MOVE = 1 / 1e5;
+export const FLY_MOVE = 5 / 1e5;
+
+export const AIR_DRAG = 400 / 1e5;
+
+export const JUMP_IMPULSE = 500 / 1e5;
+
+/* Floting point imprecision has to be dealth with */
+export function IS_VECTOR_ZERO(vec: THREE.Vector3, epsilon = 0.000001) {
+    return Math.abs(vec.x) <= epsilon &&
+        Math.abs(vec.y) <= epsilon &&
+        Math.abs(vec.z) <= epsilon;
 }
 
 /* Returns a new vector holding the orthogonal projection
  * of A onto B. */
 export function ORTHOGONAL_PROJECT(a: THREE.Vector3, b: THREE.Vector3) {
     return b.clone().multiplyScalar(a.dot(b) / b.dot(b));
+}
+
+export function FIX_IMPRECISION(vec: THREE.Vector3, epsilon = 1e-8) {
+    if (Math.abs(vec.x) < epsilon)
+        vec.x = 0;
+    if (Math.abs(vec.y) < epsilon)
+        vec.y = 0;
+    if (Math.abs(vec.z) < epsilon)
+        vec.z = 0;
+    return vec;
 }

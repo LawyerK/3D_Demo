@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import Player from './Player';
 import Controls from './Controls';
 import SettingsManager from './Settings';
-import { PLAYER_HALF_WIDTH, SQRT2, SQRT3, WORLD_SIZE } from './Constants';
-import MapObject from './MapObject';
+import { PLAYER_HEIGHT, PLAYER_WIDTH, SQRT2, SQRT3, WORLD_SIZE } from './Constants';
+import Collidable from './Collidable';
 import * as Materials from './Materials';
 
 interface SkyParams {
@@ -16,22 +16,22 @@ interface SkyParams {
 }
 
 class Main {
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    camera = new THREE.PerspectiveCamera(70, 0, 0.1, 1000);
-    scene = new THREE.Scene();
+    private renderer = new THREE.WebGLRenderer({ antialias: true });
+    private camera = new THREE.PerspectiveCamera(70, 0, 0.1, 1000);
+    private scene = new THREE.Scene();
 
-    objects: Array<MapObject> = [];
+    private objects: Array<Collidable> = [];
 
-    controls = new Controls(this.renderer.domElement);
-    settings = new SettingsManager();
-    player = new Player(this.camera, this.controls, this.settings, this.objects);
+    private controls = new Controls(this.renderer.domElement);
+    private settings = new SettingsManager();
+    private player = new Player(this.camera, this.controls, this.settings, this.objects);
 
     /* Possibly temporary */
-    runDaylightCycle = true;
+    private runDaylightCycle = true;
 
     /* Initialized by initScene() */
-    light: THREE.DirectionalLight;
-    sky: Sky;
+    private light: THREE.DirectionalLight;
+    private sky: Sky;
 
     constructor() {
         const { scene, controls, player } = this;
@@ -40,13 +40,20 @@ class Main {
         scene.add(player.object);
 
         controls.registerKeyHandler('T', this.toggleDaylightCycle.bind(this));
+        controls.registerKeyHandler('P', this.step.bind(this));
 
         this.configureRenderer();
         this.addEventListeners();
         this.initScene();
         this.begin();
 
+        this.toggleDaylightCycle(1);
+
         // this.debug_runPhysicsTests();
+    }
+
+    step(isKeyDown: number) {
+        if (isKeyDown) this.render();
     }
 
     async begin() {
@@ -78,7 +85,7 @@ class Main {
 
         // number of steps
         for (let i = 1; i < 100; i++) {
-            player.position.set(0, 0, WORLD_SIZE / 2 - PLAYER_HALF_WIDTH);
+            player.position.set(0, PLAYER_HEIGHT / 2, (WORLD_SIZE - PLAYER_WIDTH) / 2);
             player.velocity.set(0, 0, 0);
 
             const dt = 1000 / i;
@@ -157,9 +164,6 @@ class Main {
         dirLight.shadow.camera.right = AABB / 2;
         dirLight.shadow.camera.bottom = -AABB / 2;
         dirLight.shadow.camera.top = AABB / 2;
-
-        // const helper = new THREE.CameraHelper(dirLight.shadow.camera);
-        // scene.add(helper);
     }
 
     addCube() {
@@ -169,15 +173,16 @@ class Main {
         geometry.computeBoundingSphere();
 
         const cube = new THREE.Mesh(geometry, Materials.METAL_MATERIAL);
-        cube.rotateX(Math.PI / 4);
+        cube.rotateX(Math.PI / 8);
         cube.rotateY(Math.PI / 8);
         cube.position.z -= 12;
         cube.position.y -= 2;
+        cube.receiveShadow = true;
         cube.castShadow = true;
         scene.add(cube);
 
-        const size = new THREE.Vector3(5, 5, 5);
-        const obj = new MapObject(cube.position, size, cube.quaternion);
+        const scale = new THREE.Vector3(5, 5, 5);
+        const obj = new Collidable(cube.position, scale, cube.quaternion);
         objects.push(obj);
     }
 
@@ -191,9 +196,13 @@ class Main {
         plane.receiveShadow = true;
         scene.add(plane);
 
-        const size = new THREE.Vector3(WORLD_SIZE / 2, 0, WORLD_SIZE / 2);
-        const aabb = new MapObject(plane.position, size);
-        objects.push(aabb);
+        const scale = new THREE.Vector3(WORLD_SIZE / 2, 5, WORLD_SIZE / 2);
+        const position = plane.position.clone()
+            .sub(
+                new THREE.Vector3(0, 5, 0)
+            );
+        const obj = new Collidable(position, scale);
+        objects.push(obj);
     }
 
     addSky() {
@@ -263,7 +272,7 @@ class Main {
         const now = Date.now();
         const dt = Math.max(
             /* Don't allow a timestep for anything lower than 5FPS.
-             * And don't allow negative timesteps. */
+             * Don't allow negative timesteps. */
             Math.min(
                 now - this.lastTime,
                 1000 / 5

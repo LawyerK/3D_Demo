@@ -67,18 +67,20 @@ async function loadMetalMaterial() {
     await (async () => {
         const applyRepeat = (tex: THREE.Texture) => {
             tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-            tex.repeat.set(WORLD_SIZE / 5, WORLD_SIZE / 5);
+            tex.repeat.set(5, 5);
         }
 
         const aoMap = await texLoader.loadAsync(
             './assets/metal/ao.jpg'
         );
         material.aoMap = aoMap;
+        applyRepeat(aoMap);
 
         const colorMap = await texLoader.loadAsync(
             './assets/metal/color.jpg'
         );
         material.map = colorMap;
+        applyRepeat(colorMap);
 
         // const heightMap = await texLoader.loadAsync(
         //     './assets/metal/Metal_006_height.png'
@@ -90,17 +92,20 @@ async function loadMetalMaterial() {
         );
         material.metalnessMap = metalnessMap;
         material.metalness = 0.4;
+        applyRepeat(metalnessMap);
 
         const normMap = await texLoader.loadAsync(
             './assets/metal/normal.jpg'
         );
         material.normalMap = normMap;
+        applyRepeat(normMap);
 
-        const roughMap = await texLoader.loadAsync(
+        const roughnessMap = await texLoader.loadAsync(
             './assets/metal/roughness.jpg'
         );
-        material.roughnessMap = roughMap;
+        material.roughnessMap = roughnessMap;
         material.roughness = 1;
+        applyRepeat(roughnessMap);
 
         /* Force an update of the material
          * so it renders with the new tex's */

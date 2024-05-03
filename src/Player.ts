@@ -1,18 +1,30 @@
 import * as THREE from 'three';
 import SettingsManager from './Settings';
 import Controls from './Controls';
+import Collidable from './Collidable';
 import {
-    PI, PLAYER_HEIGHT,
-    Y_AXIS, GRAVITY, JUMP_IMPULSE, AIR_ACCEL,
-    AIR_DRAG, CROUCH_MAG, CROUCH_SPEED, FLY_ACCEL,
-    CROUCH_ACCEL_MULT, PLAYER_EYE_HEIGHT, THIRD_PERSON_DEPTH,
-    WORLD_SIZE, PLAYER_HALF_WIDTH,
+    PI,
+    PLAYER_HEIGHT,
+    Y_AXIS,
+    GRAVITY,
+    JUMP_IMPULSE,
+    AIR_MOVE,
+    AIR_DRAG,
+    CROUCH_MAG,
+    CROUCH_SPEED,
+    FLY_MOVE,
+    CROUCH_MOVE_MULT,
+    THIRD_PERSON_DEPTH,
+    WORLD_SIZE,
     CROUCH_JUMP_MULT,
     ORTHOGONAL_PROJECT,
-    DEFAULT_DRAG,
-    DEFAULT_ACCEL
+    MAX_SLOPE,
+    PLAYER_MASS,
+    PLAYER_WIDTH,
+    PLAYER_EYE_OFFSET,
+    GROUND_MOVE,
+    FIX_IMPRECISION
 } from './Constants';
-import MapObject from './MapObject';
 
 /* Move direction mapped by unique combination of forward/backward/left/right keys. */
 const dirs = [PI / 4, PI / 2, 3 * PI / 4, 0, 0, PI, -PI / 4, -PI / 2, -3 * PI / 4];
@@ -25,33 +37,43 @@ export default class Player {
     camera: THREE.PerspectiveCamera;
     controls: Controls;
     settings: SettingsManager;
-    objects: Array<MapObject>;
+    objects: Array<Collidable>;
 
     material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
     geometry = new THREE.BoxGeometry(
-        2 * PLAYER_HALF_WIDTH,
+        PLAYER_WIDTH,
         PLAYER_HEIGHT,
-        2 * PLAYER_HALF_WIDTH
+        PLAYER_WIDTH
     );
     mesh = new THREE.Mesh(this.geometry, this.material);
     object = new THREE.Object3D();
 
+    lastAcceleration = new THREE.Vector3();
+    contactForces = new THREE.Vector3();
     velocity = new THREE.Vector3();
     position = new THREE.Vector3();
 
-    size = new THREE.Vector3(PLAYER_HALF_WIDTH, PLAYER_HEIGHT / 2, PLAYER_HALF_WIDTH);
-    collider = new MapObject(new THREE.Vector3(), this.size);
+    size = new THREE.Vector3(PLAYER_WIDTH / 2, PLAYER_HEIGHT / 2, PLAYER_WIDTH / 2);
+    collider = new Collidable(this.position, this.size);
 
     perspective: number = 0;
     crouchVal: number = 0;
 
-    groundAccelCoef: number = DEFAULT_ACCEL;
-    groundDragCoef: number = DEFAULT_DRAG;
-
+    /* Toggleable - manually controlled */
     IS_FLYING = false;
+    /* True if feet are in contact with
+     * a collidable, false otherwise */
     ON_GROUND = true;
+    /* True if ON_GROUND and surface 
+     * is not too steep. */
+    CAN_JUMP = true;
 
-    constructor(camera: THREE.PerspectiveCamera, controls: Controls, settings: SettingsManager, objects: Array<MapObject>) {
+    arrowHelpers = [
+        new THREE.ArrowHelper(undefined, undefined, undefined, 0xff0000),
+        new THREE.ArrowHelper(undefined, undefined, undefined, 0x00ff00)
+    ];
+
+    constructor(camera: THREE.PerspectiveCamera, controls: Controls, settings: SettingsManager, objects: Array<Collidable>) {
         this.camera = camera;
         this.controls = controls;
         this.settings = settings;
@@ -64,11 +86,11 @@ export default class Player {
     }
 
     initPlayerObject() {
-        const { object, controls, camera, geometry, material, mesh } = this;
-        const { object: controlsObject } = controls;
+        const { position, object, controls, camera, material, mesh } = this;
+        const controlsObject = controls.getObject();
 
-        geometry.translate(0, PLAYER_HEIGHT / 2, 0);
-        geometry.computeBoundingSphere();
+        position.set(0, PLAYER_HEIGHT / 2, 0);
+
         material.colorWrite = false;
         material.depthWrite = false;
         mesh.castShadow = true;
@@ -76,6 +98,10 @@ export default class Player {
         controlsObject.add(camera);
         object.add(controlsObject);
         object.add(mesh);
+
+        for (const ah of this.arrowHelpers) {
+            object.add(ah);
+        }
     }
 
     changePerspective(isKeyDown: number) {
@@ -117,31 +143,31 @@ export default class Player {
         this.IS_FLYING = !this.IS_FLYING;
     }
 
-    getAccelConst() {
+    getMoveForceMagnitude() {
         const { controls, settings, IS_FLYING, ON_GROUND } = this;
         const keybinds = settings.getKeybinds();
 
-        let accel = AIR_ACCEL;
+        let magnitude = AIR_MOVE;
 
         if (IS_FLYING) {
-            accel = FLY_ACCEL;
+            magnitude = FLY_MOVE;
         } else if (ON_GROUND) {
-            accel = this.groundAccelCoef;
+            magnitude = GROUND_MOVE;
         }
 
-        const isCrouching = controls.isKeyDown(keybinds.CROUCH);
-        if (isCrouching && !IS_FLYING) {
-            accel *= CROUCH_ACCEL_MULT;
+        if (!IS_FLYING) {
+            const isCrouching = controls.isKeyDown(keybinds.CROUCH);
+            if (isCrouching) {
+                magnitude *= CROUCH_MOVE_MULT;
+            }
         }
 
-        return accel;
+        return magnitude;
     }
 
-    getAcceleration() {
+    getMoveForce() {
         const { camera, controls, settings, IS_FLYING } = this;
         const keybinds = settings.getKeybinds();
-
-        const moveDir = new THREE.Vector3();
 
         const forward_backward =
             controls.isKeyDown(keybinds.MOVE_BACKWARD) -
@@ -149,6 +175,8 @@ export default class Player {
         const left_right =
             controls.isKeyDown(keybinds.MOVE_RIGHT) -
             controls.isKeyDown(keybinds.MOVE_LEFT);
+
+        const moveForce = new THREE.Vector3();
 
         if (forward_backward || left_right) {
             /* First re-map from range [-1, 1] to range [0, 2]
@@ -160,158 +188,221 @@ export default class Player {
             const wishDir = dirs[index];
 
             /* Get camera's direction vector */
-            camera.getWorldDirection(moveDir);
+            camera.getWorldDirection(moveForce);
 
             /* We do not want y-component to affect movement */
-            moveDir.y = 0;
+            moveForce.y = 0;
 
             /* Rotate moveDir vector moveDir degrees around 
              * the y-axis to get final movement direction  */
-            moveDir.applyAxisAngle(Y_AXIS, wishDir);
+            moveForce.applyAxisAngle(Y_AXIS, wishDir);
         }
 
         if (IS_FLYING) {
             const up_down =
                 controls.isKeyDown(keybinds.JUMP) -
                 controls.isKeyDown(keybinds.CROUCH);
-            moveDir.y = up_down;
+            moveForce.y = up_down;
         }
 
         /* Now we have a vector pointing in the direction
-         * we wish to move in. Set its length to */
-        const accelMagnitude = this.getAccelConst();
-        const acceleration = moveDir
-            .setLength(accelMagnitude);
+         * we wish to move in. Set its length. */
+        const magnitude = this.getMoveForceMagnitude();
+        moveForce.setLength(magnitude);
 
-        return acceleration;
+        return moveForce;
     }
 
-    getDragCoefficient() {
-        const { IS_FLYING, ON_GROUND } = this;
+    getDragForce() {
+        const { velocity, IS_FLYING } = this;
 
-        let dragCoef = AIR_DRAG;
-
-        if (!IS_FLYING && ON_GROUND) {
-            dragCoef = this.groundDragCoef;
-        }
-
-        return dragCoef;
-    }
-
-    /* Apply drag force proportional to velocity at current time
-     * Mass of player is currently implicitly assumed to be 1.
-     * F=MA => A=F/M M=1 thus A=F */
-    applyDrag(acceleration: THREE.Vector3, velocity: THREE.Vector3) {
-        const dragCoef = this.getDragCoefficient();
         const dragForce = velocity.clone()
             .negate()
-            .multiplyScalar(dragCoef);
+            .multiplyScalar(AIR_DRAG);
 
-        if (!this.IS_FLYING)
+        if (!IS_FLYING)
             dragForce.y = 0;
 
-        acceleration.add(dragForce);
+        return dragForce;
     }
 
-    /* These kinematics equations are technically not valid
-     * due to the application of a drag force proportional
-     * to velocity. */
-    updatePosition(dt: number) {
-        const { position, velocity, size, controls, settings, ON_GROUND, IS_FLYING } = this;
+    handleJump() {
+        const { controls, settings, IS_FLYING, CAN_JUMP, velocity } = this;
         const keybinds = settings.getKeybinds();
-
-        /* Get acceleration. This is only a function of 
-         * the movement keys pressed during this frame. */
-        const acceleration = this.getAcceleration();
-        this.applyDrag(acceleration, velocity);
-
-        /* Don't want gravity if flying. */
-        if (!IS_FLYING)
-            acceleration.y -= GRAVITY;
 
         const crouchDown = controls.isKeyDown(keybinds.CROUCH);
         const jumpDown = controls.isKeyDown(keybinds.JUMP);
 
-        if (!IS_FLYING && ON_GROUND && jumpDown) {
+        if (!IS_FLYING && CAN_JUMP && jumpDown) {
             const jumpMult = crouchDown ? CROUCH_JUMP_MULT : 1;
-            this.velocity.y = JUMP_IMPULSE * jumpMult;
-            this.ON_GROUND = false;
+            velocity.y = JUMP_IMPULSE * jumpMult;
+        }
+    }
+
+    getNetForce(includeDrag = true) {
+        const { contactForces, IS_FLYING } = this;
+
+        const moveForce = this.getMoveForce();
+        const dragForce = this.getDragForce();
+        const netForce = new THREE.Vector3()
+            .add(contactForces)
+            .add(moveForce);
+
+        if (includeDrag) {
+            netForce.add(dragForce);
         }
 
-        /* Calculate final position via
-         * x(t) = x0 + v*t + 0.5*a*t^2 */
-        const deltaPos = velocity.clone()
-            .multiplyScalar(dt)
-            .add(
-                acceleration.clone()
-                    .multiplyScalar(0.5 * dt ** 2)
-            );
-        position.add(deltaPos);
+        if (!IS_FLYING) {
+            netForce.add(GRAVITY)
+        }
 
-        /* Update velocity via the
-         * formula v(t) = v0 + a*t */
-        velocity.add(
-            acceleration.clone()
+        // FIX_IMPRECISION(netForce, 1e-8);
+
+        return netForce;
+    }
+
+    updatePosition(dt: number) {
+        const { position, velocity, lastAcceleration } = this;
+
+        // const acceleration = this.getNetForce()
+        //     .divideScalar(PLAYER_MASS);
+
+        /* use last position, velocity, and acceleration
+         * to calculate new position. */
+        position.add(
+            velocity.clone()
                 .multiplyScalar(dt)
+                .add(
+                    lastAcceleration.clone()
+                        .multiplyScalar(0.5 * dt ** 2)
+                )
         );
     }
 
-    handleCollisions() {
-        const { objects, position, velocity } = this;
+    doThingThing(normal: THREE.Vector3) {
+        const netForce = this.getNetForce();
 
-        /* We are not on the ground UNLESS we
-         * are colliding with an object 
-         * in the y-direction. */
+        /* Projection of netForce onto surface normal */
+        const normalMag = -netForce.dot(normal);
+        const normalForce = normal.clone()
+            .multiplyScalar(
+                normalMag
+            );
+        /* Orthogonal component of netForce */
+        const ortho = netForce.clone()
+            .add(normalForce);
+
+        console.log(ortho);
+    }
+
+    handleCollision(object: Collidable, normal: THREE.Vector3) {
+        const { velocity, contactForces } = this;
+        const { μs, μk } = object.properties;
+
+        const netForce = this.getNetForce(false);
+
+        /* Projection of netForce onto surface normal */
+        const normalMag = -netForce.dot(normal);
+        const normalForce = normal.clone()
+            .multiplyScalar(
+                normalMag
+            );
+        /* Orthogonal component of netForce */
+        const ortho = netForce.clone()
+            .add(normalForce);
+
+        // contactForces.add(normalForce);
+
+        const fsMax = μs * normalMag;
+        const fk = μk * normalMag;
+
+        /* Check if static friction holds. */
+        if (ortho.length() <= fsMax) {
+            contactForces.sub(
+                ortho
+            );
+            // this.doThingThing(normal);
+        } else {
+            contactForces.sub(
+                velocity.clone()
+                    .normalize()
+                    .setLength(
+                        fk
+                    )
+            );
+        }
+
+        /* Tells us that our feet are colliding 
+         * with an object. */
+        if (normal.y > 0) {
+            if (!this.CAN_JUMP) {
+                const slope = 1 - normal.dot(Y_AXIS);
+                this.CAN_JUMP = slope < MAX_SLOPE;
+            }
+            this.ON_GROUND = true;
+        }
+    }
+
+    handleCollisions() {
+        const { objects, collider, position, velocity } = this;
+
+        /* We are not on the ground and cannot 
+         * jump UNLESS our feet are colliding  
+         * with an object in the y-dir. */
+        this.contactForces.set(0, 0, 0);
         this.ON_GROUND = false;
+        this.CAN_JUMP = false;
 
         for (const object of objects) {
-            const [collides, offset] = this.collider.SAT(object);
+            const [collides, offset] = collider.SAT(object);
 
-            if (collides) {
-                position.add(offset);
-                velocity.sub(ORTHOGONAL_PROJECT(velocity, offset));
+            if (!collides)
+                continue;
 
-                if (offset.y > 0) {
-                    this.groundAccelCoef = object.properties.accelCoef;
-                    this.groundDragCoef = object.properties.dragCoef;
-                    this.ON_GROUND = true;
-                }
-            }
+            position.add(offset);
+            velocity.sub(
+                ORTHOGONAL_PROJECT(
+                    velocity,
+                    offset
+                )
+            );
+
+            const normal = offset.normalize();
+            this.handleCollision(
+                object,
+                normal
+            );
         }
+    }
+
+    updateVelocity(dt: number) {
+        const { lastAcceleration, velocity } = this;
+
+        const acceleration = this.getNetForce()
+            .divideScalar(PLAYER_MASS);
+
+        velocity.add(
+            lastAcceleration.add(
+                acceleration
+            ).multiplyScalar(
+                0.5 * dt
+            )
+        );
+
+        lastAcceleration.copy(acceleration);
     }
 
     enforceWorldBounds() {
-        const boundX = WORLD_SIZE / 2 - PLAYER_HALF_WIDTH;
-        const boundY = WORLD_SIZE / 2 - PLAYER_HEIGHT;
+        const boundX = (WORLD_SIZE - PLAYER_WIDTH) / 2;
+        const boundY = (WORLD_SIZE - PLAYER_HEIGHT) / 2;
         const MAX_POS = new THREE.Vector3(boundX, boundY, boundX);
-        const MIN_POS = new THREE.Vector3(-boundX, 0, -boundX);
+        const MIN_POS = new THREE.Vector3(-boundX, -0.1, -boundX);
         this.position = this.position.clamp(MIN_POS, MAX_POS);
-
-        /* Teporary fix. Continuous collision
-         * detection is the proper fix.
-         * TODO: Do that ^. */
-        if (this.position.y == 0) {
-            this.ON_GROUND = true;
-            this.velocity.y = 0;
-        }
     }
 
-    updateColliderPosition() {
-        const { position, size } = this;
-
-        /* Ideally the AABB just inherits our
-         * position vector. However, we are 
-         * centered at our feet vertically
-         * and the AABB expects us to be
-         * centered at the middle. So, just
-         * copy it and adjust for that.  */
-        this.collider.position.copy(position);
-        this.collider.position.y += size.y;
-    }
-
-    update(dt: number) {
-        const { settings, controls, object, mesh, position, size, IS_FLYING } = this;
-        const { object: controlsObject } = controls;
+    updateCrouchVal(dt: number) {
+        const { controls, settings, IS_FLYING, mesh, size } = this;
+        const controlsObject = controls.getObject();
         const keybinds = settings.getKeybinds();
 
         const isCrouching =
@@ -329,16 +420,25 @@ export default class Player {
             );
         }
 
-        controlsObject.position.y = PLAYER_EYE_HEIGHT - this.crouchVal;
+        controlsObject.position.y = (PLAYER_HEIGHT - PLAYER_EYE_OFFSET - this.crouchVal) / 2;
         mesh.scale.y = (1 - this.crouchVal / PLAYER_HEIGHT);
         size.y = (PLAYER_HEIGHT - this.crouchVal) / 2;
+    }
 
+    update(dt: number) {
+        const { position, object } = this;
+
+        this.updateCrouchVal(dt);
+        this.handleJump();
         this.updatePosition(dt);
-        this.updateColliderPosition();
         this.handleCollisions();
+        this.updateVelocity(dt);
         this.enforceWorldBounds();
 
-        /* Set player to the new position. */
+        this.arrowHelpers[0].setDirection(this.getNetForce().normalize());
+        this.arrowHelpers[1].setDirection(this.velocity.clone().normalize());
+        this.arrowHelpers[1].setLength(this.velocity.length() * 100);
+
         object.position.copy(position);
     }
 }
