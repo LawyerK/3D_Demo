@@ -28,6 +28,10 @@ class Main {
 
     /* Possibly temporary */
     private runDaylightCycle = true;
+    private paused = false;
+    private doStep = false;
+
+    private timeOfDay = 0;
 
     /* Initialized by initScene() */
     private light: THREE.DirectionalLight;
@@ -37,23 +41,34 @@ class Main {
         const { scene, controls, player } = this;
 
         // Must add the player object to scene
-        scene.add(player.object);
+        scene.add(player.getObject());
 
-        controls.registerKeyHandler('T', this.toggleDaylightCycle.bind(this));
-        controls.registerKeyHandler('P', this.step.bind(this));
+        controls.registerKeyDownHandler('T', this.toggleDaylightCycle.bind(this));
+        controls.registerKeyDownHandler('P', this.pause.bind(this));
+        controls.registerKeyDownHandler('L', this.step.bind(this));
 
         this.configureRenderer();
         this.addEventListeners();
         this.initScene();
         this.begin();
 
-        this.toggleDaylightCycle(1);
-
-        // this.debug_runPhysicsTests();
+        this.toggleDaylightCycle();
     }
 
-    step(isKeyDown: number) {
-        if (isKeyDown) this.render();
+    pause() {
+        this.paused = !this.paused;
+    }
+
+    step() {
+        this.doStep = true;
+    }
+
+    toggleDaylightCycle() {
+        this.runDaylightCycle = !this.runDaylightCycle;
+
+        if (!this.runDaylightCycle) {
+            this.updateSunPosition(10, 45);
+        }
     }
 
     async begin() {
@@ -68,59 +83,16 @@ class Main {
         this.render();
     }
 
-    /* Physics simulation should be independent of the number
-     * of discrete timesteps used. This tests that this
-     * is at least *mostly* the case. Proper solutions
-     * of the DE including drag force are complicated.
-     * It turns out that for anything beyond 2 discrete
-     * timesteps per second (2FPS) the way things are
-     * done now is actually a pretty decent approximation
-     * Between [5, 100] FPS the difference in position 
-     * is only 0.3 units! */
-    debug_runPhysicsTests() {
-        const { player, controls, settings } = this;
-        const keybinds = settings.getKeybinds();
-
-        controls.keysDown.set(keybinds.MOVE_FORWARD, 1);
-
-        // number of steps
-        for (let i = 1; i < 100; i++) {
-            player.position.set(0, PLAYER_HEIGHT / 2, (WORLD_SIZE - PLAYER_WIDTH) / 2);
-            player.velocity.set(0, 0, 0);
-
-            const dt = 1000 / i;
-
-            console.log(`---- ${i} discrete steps where dt=${dt}`);
-
-            for (let j = 0; j < i; j++) {
-                player.update(dt);
-            }
-
-            console.log(player.position.z);
-        }
-    }
-
-    toggleDaylightCycle(isKeydown: number) {
-        if (!isKeydown)
-            return;
-
-        this.runDaylightCycle = !this.runDaylightCycle;
-        this.updateSunPosition(10, 45);
-    }
-
     configureRenderer() {
         const { renderer } = this;
 
         renderer.setPixelRatio(window.devicePixelRatio);
-
         renderer.toneMapping = THREE.CineonToneMapping;
-
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     }
 
     addEventListeners() {
-        /* Handle window resize */
         window.addEventListener('resize', this.handleResize.bind(this));
         this.handleResize();
     }
@@ -135,7 +107,6 @@ class Main {
     addLights() {
         const { scene } = this;
 
-        /* Add directional light */
         const dirLight = this.light = new THREE.DirectionalLight(0xffffff);
         this.configureShadowCasting(dirLight);
         scene.add(dirLight);
@@ -145,9 +116,6 @@ class Main {
     }
 
     configureShadowCasting(dirLight: THREE.DirectionalLight) {
-        // const { scene } = this;
-
-        /* Set up shadow properties for the light */
         dirLight.castShadow = true;
 
         dirLight.shadow.mapSize.width = 4096;
@@ -166,11 +134,10 @@ class Main {
         dirLight.shadow.camera.top = AABB / 2;
     }
 
-    addCube() {
+    addStaticCube() {
         const { scene, objects } = this;
 
         const geometry = new THREE.BoxGeometry(10, 10, 10);
-        geometry.computeBoundingSphere();
 
         const cube = new THREE.Mesh(geometry, Materials.METAL_MATERIAL);
         cube.rotateX(Math.PI / 8);
@@ -186,6 +153,23 @@ class Main {
         objects.push(obj);
     }
 
+    addCube() {
+        const { scene, objects } = this;
+
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+
+        const cube = new THREE.Mesh(geometry, Materials.METAL_MATERIAL);
+        cube.position.z -= 12;
+        cube.position.y += 10;
+        cube.receiveShadow = true;
+        cube.castShadow = true;
+        scene.add(cube);
+
+        const scale = new THREE.Vector3(0.5, 0.5, 0.5);
+        const obj = new Collidable(cube.position, scale, cube.quaternion);
+        objects.push(obj);
+    }
+
     addFloor() {
         const { scene, objects } = this;
 
@@ -196,10 +180,10 @@ class Main {
         plane.receiveShadow = true;
         scene.add(plane);
 
-        const scale = new THREE.Vector3(WORLD_SIZE / 2, 5, WORLD_SIZE / 2);
+        const scale = new THREE.Vector3(WORLD_SIZE / 2, WORLD_SIZE / 2, WORLD_SIZE / 2);
         const position = plane.position.clone()
             .sub(
-                new THREE.Vector3(0, 5, 0)
+                new THREE.Vector3(0, WORLD_SIZE / 2, 0)
             );
         const obj = new Collidable(position, scale);
         objects.push(obj);
@@ -230,6 +214,7 @@ class Main {
         this.addLights();
         this.addSky();
         this.addFloor();
+        this.addStaticCube();
         this.addCube();
     }
 
@@ -262,7 +247,7 @@ class Main {
     lastTime = Date.now()
 
     render() {
-        const { renderer, scene, camera, runDaylightCycle } = this;
+        const { renderer, scene, camera, doStep, paused, timeOfDay, runDaylightCycle } = this;
 
         /* Go ahead and queue the next frame
          * JavaScript is single-threaded/synchronous */
@@ -277,15 +262,19 @@ class Main {
                 now - this.lastTime,
                 1000 / 5
             ), 0
-        );
+        ) / 1000;
         this.lastTime = now;
 
         /* Update all player related things */
-        this.player.update(dt);
+        if (doStep || !paused) {
+            this.player.update(dt);
+            this.doStep = false;
+        }
 
         /* Simulate daylight cycle. 1 degree per second. */
         if (runDaylightCycle) {
-            this.updateSunPosition(now * 0.001, 45);
+            this.updateSunPosition(timeOfDay * 15, 45);
+            this.timeOfDay += dt / 15;
         }
 
         /* Render the scene! */

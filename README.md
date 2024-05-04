@@ -13,6 +13,8 @@ The goal of this project is to create an educational and instructive demonstrati
 - `G` to toggle to 3rd person
 - `T` to toggle daylight cycle
     - When off, it is forced to a constant point during the day.
+- `P` to pause physics simulation
+- `L` to tick physics engine when paused.
 
 The physics simulation mirrors Newtonian mechanics and is implemented using the [Velocity Verlet integration technique](https://en.wikipedia.org/wiki/Verlet_integration#Velocity_Verlet). 
 Collision detection and resolution is implemented using the [Separating Axis Theorem](https://en.wikipedia.org/wiki/Hyperplane_separation_theorem#Use_in_collision_detection).

@@ -62,7 +62,7 @@ export default class SettingsManager {
     }
 
     isValidKey(key: String) {
-        if (key.length == 1) {
+        if (key.length === 1) {
             const charCode = key.charCodeAt(0);
             return
         }

@@ -2,11 +2,15 @@ import * as THREE from 'three';
 import { IS_VECTOR_ZERO } from './Constants';
 
 interface CollidableProps {
+    static: boolean,
+    restitution: number;
     μs: number;
     μk: number;
 };
 
 const DEFAULT_PROPERTIES: CollidableProps = {
+    static: true,
+    restitution: 1,
     μs: 0.8,
     μk: 0.4,
 };
@@ -39,9 +43,10 @@ export default class Collidable {
     private vertices: Array<THREE.Vector3> = [];
     private normals: Array<THREE.Vector3> = [];
 
-    position: THREE.Vector3;
-    scale: THREE.Vector3;
-    properties: CollidableProps;
+    private position: THREE.Vector3;
+    private scale: THREE.Vector3;
+    private properties: CollidableProps;
+    private sleeping: boolean = false;
 
     constructor(position: THREE.Vector3, scale: THREE.Vector3, rotation = new THREE.Quaternion(), properties = DEFAULT_PROPERTIES) {
         this.position = position;
@@ -59,6 +64,10 @@ export default class Collidable {
 
         /* Set their values */
         this.update(rotation);
+    }
+
+    getProperties() {
+        return this.properties;
     }
 
     update(rotation: THREE.Quaternion) {
@@ -109,7 +118,7 @@ export default class Collidable {
      * Optionally skips testing one of our normals. */
     parallel(vector: THREE.Vector3, skipIndex = -1) {
         for (let i = 0, l = this.normals.length; i < l; i++) {
-            if (i == skipIndex) {
+            if (i === skipIndex) {
                 continue;
             }
 
@@ -174,7 +183,7 @@ export default class Collidable {
         for (const theirNormal of their.normals) {
             const crossProducts = this.getCrossProducts(theirNormal);
 
-            if (crossProducts.length == this.normals.length) {
+            if (crossProducts.length === this.normals.length) {
                 axes.push(theirNormal);
             }
 
@@ -214,7 +223,7 @@ export default class Collidable {
         }
 
         /* Floating point imprecision? */
-        if (leastOverlap == 0)
+        if (leastOverlap === 0)
             return SAT_NO_COLLISION;
 
         return [true, offsetVec];

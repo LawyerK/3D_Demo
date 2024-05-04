@@ -15,7 +15,7 @@ export const PLAYER_EYE_OFFSET = 0.25;
 
 export const THIRD_PERSON_DEPTH = 5;
 
-export const CROUCH_SPEED = 0.0025;
+export const CROUCH_SPEED = 2.5;
 export const CROUCH_MAG = 0.5;
 export const CROUCH_MOVE_MULT = 0.5;
 export const CROUCH_JUMP_MULT = 0.9;
@@ -23,16 +23,16 @@ export const CROUCH_JUMP_MULT = 0.9;
 export const MAX_SLOPE = 0.2;
 
 /* Physics constants */
-export const PLAYER_MASS = 1e5;
+export const PLAYER_MASS = 10;
 
-export const GROUND_MOVE = 3;
-export const AIR_MOVE = 1;
-export const FLY_MOVE = 5;
+export const GROUND_MOVE = 300;
+export const AIR_MOVE = 100;
+export const FLY_MOVE = 500;
 
-export const AIR_DRAG = 400;
+export const AIR_DRAG = 40;
 
-export const WEIGHT_FORCE = new THREE.Vector3(0, -1.5 / 1e5 * PLAYER_MASS, 0);
-export const JUMP_IMPULSE = 500;
+export const WEIGHT_FORCE = new THREE.Vector3(0, -15 * PLAYER_MASS, 0);
+export const JUMP_IMPULSE = 50;
 
 /* Floting point imprecision has to be dealth with */
 export function IS_VECTOR_ZERO(vec: THREE.Vector3, epsilon = 0.000001) {

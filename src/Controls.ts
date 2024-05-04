@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PI_2 } from './Constants';
 
-type KeydownHandler = (val: number) => void;
+type KeydownHandler = () => void;
 
 export default class Controls {
     private domElement: HTMLElement;
@@ -15,8 +15,8 @@ export default class Controls {
     private maxAngle = Math.PI;
     private minAngle = 0;
 
-    private keyHandlers = new Map<String, KeydownHandler>();
-    keysDown = new Map<String, number>();
+    private keyDownHandlers = new Map<String, KeydownHandler>();
+    private keysDown = new Map<String, number>();
 
     constructor(domElement: HTMLElement) {
         this.domElement = domElement;
@@ -63,7 +63,7 @@ export default class Controls {
 
     handleChange(e: Event) {
         this.isLocked =
-            document.pointerLockElement == this.domElement;
+            document.pointerLockElement === this.domElement;
 
         if (!this.isLocked) {
             this.keysDown.forEach((_, key) => {
@@ -119,9 +119,12 @@ export default class Controls {
 
         const key = e.key.toUpperCase();
 
-        const keyHandler = this.keyHandlers.get(key);
-        if (keyHandler)
-            keyHandler(val);
+        if (val === 1) {
+            const keyHandler = this.keyDownHandlers.get(key);
+            if (keyHandler) {
+                keyHandler();
+            }
+        }
 
         keysDown.set(key, val);
 
@@ -129,8 +132,8 @@ export default class Controls {
         e.preventDefault();
     }
 
-    registerKeyHandler(key: string, handler: KeydownHandler) {
-        this.keyHandlers.set(key, handler);
+    registerKeyDownHandler(key: string, handler: KeydownHandler) {
+        this.keyDownHandlers.set(key, handler);
     }
 
     isKeyDown(key: String) {

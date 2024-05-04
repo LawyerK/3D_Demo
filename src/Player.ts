@@ -33,44 +33,39 @@ const FIRST_PERSON = 0;
 const THIRD_PERSON_BACK = 1; //2;
 
 export default class Player {
-    camera: THREE.PerspectiveCamera;
-    controls: Controls;
-    settings: SettingsManager;
-    objects: Array<Collidable>;
+    private camera: THREE.PerspectiveCamera;
+    private controls: Controls;
+    private settings: SettingsManager;
+    private objects: Array<Collidable>;
 
-    material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-    geometry = new THREE.BoxGeometry(
+    private material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+    private geometry = new THREE.BoxGeometry(
         PLAYER_WIDTH,
         PLAYER_HEIGHT,
         PLAYER_WIDTH
     );
-    mesh = new THREE.Mesh(this.geometry, this.material);
-    object = new THREE.Object3D();
+    private mesh = new THREE.Mesh(this.geometry, this.material);
+    private object = new THREE.Object3D();
 
-    lastAcceleration = new THREE.Vector3();
-    contactForces = new THREE.Vector3();
-    velocity = new THREE.Vector3();
-    position = new THREE.Vector3();
+    private lastAcceleration = new THREE.Vector3();
+    private contactForces = new THREE.Vector3();
+    private velocity = new THREE.Vector3();
+    private position = new THREE.Vector3();
 
-    size = new THREE.Vector3(PLAYER_WIDTH / 2, PLAYER_HEIGHT / 2, PLAYER_WIDTH / 2);
-    collider = new Collidable(this.position, this.size);
+    private size = new THREE.Vector3(PLAYER_WIDTH / 2, PLAYER_HEIGHT / 2, PLAYER_WIDTH / 2);
+    private collider = new Collidable(this.position, this.size);
 
-    perspective: number = 0;
-    crouchVal: number = 0;
+    private perspective: number = 0;
+    private crouchVal: number = 0;
 
     /* Toggleable - manually controlled */
-    IS_FLYING = false;
+    private IS_FLYING = false;
     /* True if feet are in contact with
      * a collidable, false otherwise */
-    ON_GROUND = true;
+    private ON_GROUND = true;
     /* True if ON_GROUND and surface 
      * is not too steep. */
-    CAN_JUMP = true;
-
-    arrowHelpers = [
-        new THREE.ArrowHelper(undefined, undefined, undefined, 0xff0000),
-        new THREE.ArrowHelper(undefined, undefined, undefined, 0x00ff00)
-    ];
+    private CAN_JUMP = true;
 
     constructor(camera: THREE.PerspectiveCamera, controls: Controls, settings: SettingsManager, objects: Array<Collidable>) {
         this.camera = camera;
@@ -78,10 +73,14 @@ export default class Player {
         this.settings = settings;
         this.objects = objects;
 
-        controls.registerKeyHandler('G', this.changePerspective.bind(this));
-        controls.registerKeyHandler('F', this.toggleFly.bind(this));
+        controls.registerKeyDownHandler('G', this.changePerspective.bind(this));
+        controls.registerKeyDownHandler('F', this.toggleFly.bind(this));
 
         this.initPlayerObject();
+    }
+
+    getObject() {
+        return this.object;
     }
 
     initPlayerObject() {
@@ -97,17 +96,10 @@ export default class Player {
         controlsObject.add(camera);
         object.add(controlsObject);
         object.add(mesh);
-
-        for (const ah of this.arrowHelpers) {
-            object.add(ah);
-        }
     }
 
-    changePerspective(isKeyDown: number) {
+    changePerspective() {
         const { camera, material } = this;
-
-        if (!isKeyDown)
-            return;
 
         this.perspective = (this.perspective + 1) % 2; // 3;
 
@@ -135,10 +127,7 @@ export default class Player {
         }
     }
 
-    toggleFly(isKeyDown: number) {
-        if (!isKeyDown)
-            return;
-
+    toggleFly() {
         this.IS_FLYING = !this.IS_FLYING;
     }
 
@@ -261,7 +250,7 @@ export default class Player {
     updatePosition(dt: number) {
         const { position, velocity, lastAcceleration } = this;
 
-        /* use last position, velocity, and acceleration
+        /* Use last position, velocity, and acceleration
          * to calculate new position. */
         position.add(
             velocity.clone()
@@ -275,7 +264,7 @@ export default class Player {
 
     handleCollision(object: Collidable, normal: THREE.Vector3) {
         const { velocity, contactForces } = this;
-        const { μs, μk } = object.properties;
+        const { μs, μk } = object.getProperties();
 
         const netForce = this.getNetForce(false);
 
@@ -285,25 +274,48 @@ export default class Player {
             .multiplyScalar(
                 normalMag
             );
-        /* Orthogonal component of netForce */
-        const ortho = netForce.clone()
+        /* Component of netForce orthogonal to surface normal */
+        const nfOrtho = netForce.clone()
             .add(normalForce);
 
         const fsMax = μs * normalMag;
         const fk = μk * normalMag;
 
-        /* Check if static friction holds. */
-        if (ortho.length() <= fsMax) {
-            contactForces.sub(
-                ortho
+        /* Projection of velocity onto surface normal */
+        const velRadial = normal.clone()
+            .multiplyScalar(
+                velocity.dot(normal)
             );
-        } else {
+        /* Component of velocity orthogonal to surface normal */
+        const velOrtho = velocity.clone()
+            .sub(velRadial);
+
+        const vLnSq = velOrtho.lengthSq();
+
+        /* Kinetic friction comes into play when a body
+         * is in motion relative to the surface it is on.
+         * The constant here is relatively arbitrary.
+         * It certainly can't be zero due to how computers work.
+         * I wanted to make it easy enough to get yourself 
+         * to "stick" on a slope, so it is tuned currently to 
+         * achieve that. */
+        if (vLnSq > 5e-2) {
+            /* We have to be careful when velocity approaches zero.
+             * We don't want kinetic friction to flip the direction 
+             * of our motion */
+            const flipFix = vLnSq > 1 ? 1 : Math.sqrt(vLnSq);
             contactForces.sub(
                 velocity.clone()
-                    .normalize()
                     .setLength(
-                        fk
+                        fk * flipFix
                     )
+            );
+        } else if (nfOrtho.length() <= fsMax) {
+            /* If a body is not in motion, static friction
+             * will apply IF the net force orthogonal to
+             * the surface normal is less than the upper bound. */
+            contactForces.sub(
+                nfOrtho
             );
         }
 
@@ -334,11 +346,15 @@ export default class Player {
             if (!collides)
                 continue;
 
+            const { restitution } = object.getProperties();
+
             position.add(offset);
             velocity.sub(
                 ORTHOGONAL_PROJECT(
                     velocity,
                     offset
+                ).multiplyScalar(
+                    restitution
                 )
             );
 
@@ -353,9 +369,13 @@ export default class Player {
     updateVelocity(dt: number) {
         const { lastAcceleration, velocity } = this;
 
+        /* Use new position to find new acceleration
+         * (namely new contactForces). */
         const acceleration = this.getNetForce()
             .divideScalar(PLAYER_MASS);
 
+        /* Use old & new acceleration to find new 
+         * velocity */
         velocity.add(
             lastAcceleration.add(
                 acceleration
@@ -371,7 +391,7 @@ export default class Player {
         const boundX = (WORLD_SIZE - PLAYER_WIDTH) / 2;
         const boundY = (WORLD_SIZE - PLAYER_HEIGHT) / 2;
         const MAX_POS = new THREE.Vector3(boundX, boundY, boundX);
-        const MIN_POS = new THREE.Vector3(-boundX, -0.1, -boundX);
+        const MIN_POS = new THREE.Vector3(-boundX, -0.0001, -boundX);
         this.position = this.position.clamp(MIN_POS, MAX_POS);
     }
 
@@ -406,13 +426,10 @@ export default class Player {
         this.updateCrouchVal(dt);
         this.handleJump();
         this.updatePosition(dt);
+        this.enforceWorldBounds();
         this.handleCollisions();
         this.updateVelocity(dt);
         this.enforceWorldBounds();
-
-        this.arrowHelpers[0].setDirection(this.getNetForce().normalize());
-        this.arrowHelpers[1].setDirection(this.velocity.clone().normalize());
-        this.arrowHelpers[1].setLength(this.velocity.length() * 100);
 
         object.position.copy(position);
     }
