@@ -5,9 +5,9 @@
   "private": true,
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "webpack",
-    "watch": "webpack watch",
-    "dev": "webpack serve"
+    "build": "cross-env BUILD_MODE=production webpack",
+    "watch": "cross-env BUILD_MODE=development webpack watch",
+    "dev": "cross-env BUILD_MODE=development webpack serve"
   },
   "author": "",
   "license": "ISC",
@@ -16,6 +16,7 @@
     "three": "^0.163.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "fork-ts-checker-webpack-plugin": "^9.0.2",
     "ts-loader": "^9.5.1",
     "typescript": "^5.4.5",

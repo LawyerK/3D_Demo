@@ -6,7 +6,7 @@ import {
     PI,
     PLAYER_HEIGHT,
     Y_AXIS,
-    GRAVITY,
+    WEIGHT_FORCE,
     JUMP_IMPULSE,
     AIR_MOVE,
     AIR_DRAG,
@@ -22,8 +22,7 @@ import {
     PLAYER_MASS,
     PLAYER_WIDTH,
     PLAYER_EYE_OFFSET,
-    GROUND_MOVE,
-    FIX_IMPRECISION
+    GROUND_MOVE
 } from './Constants';
 
 /* Move direction mapped by unique combination of forward/backward/left/right keys. */
@@ -235,7 +234,7 @@ export default class Player {
 
         if (!IS_FLYING && CAN_JUMP && jumpDown) {
             const jumpMult = crouchDown ? CROUCH_JUMP_MULT : 1;
-            velocity.y = JUMP_IMPULSE * jumpMult;
+            velocity.y = JUMP_IMPULSE * jumpMult / PLAYER_MASS;
         }
     }
 
@@ -253,19 +252,14 @@ export default class Player {
         }
 
         if (!IS_FLYING) {
-            netForce.add(GRAVITY)
+            netForce.add(WEIGHT_FORCE)
         }
-
-        // FIX_IMPRECISION(netForce, 1e-8);
 
         return netForce;
     }
 
     updatePosition(dt: number) {
         const { position, velocity, lastAcceleration } = this;
-
-        // const acceleration = this.getNetForce()
-        //     .divideScalar(PLAYER_MASS);
 
         /* use last position, velocity, and acceleration
          * to calculate new position. */
@@ -277,22 +271,6 @@ export default class Player {
                         .multiplyScalar(0.5 * dt ** 2)
                 )
         );
-    }
-
-    doThingThing(normal: THREE.Vector3) {
-        const netForce = this.getNetForce();
-
-        /* Projection of netForce onto surface normal */
-        const normalMag = -netForce.dot(normal);
-        const normalForce = normal.clone()
-            .multiplyScalar(
-                normalMag
-            );
-        /* Orthogonal component of netForce */
-        const ortho = netForce.clone()
-            .add(normalForce);
-
-        console.log(ortho);
     }
 
     handleCollision(object: Collidable, normal: THREE.Vector3) {
@@ -311,8 +289,6 @@ export default class Player {
         const ortho = netForce.clone()
             .add(normalForce);
 
-        // contactForces.add(normalForce);
-
         const fsMax = μs * normalMag;
         const fk = μk * normalMag;
 
@@ -321,7 +297,6 @@ export default class Player {
             contactForces.sub(
                 ortho
             );
-            // this.doThingThing(normal);
         } else {
             contactForces.sub(
                 velocity.clone()

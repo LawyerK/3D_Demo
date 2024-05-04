@@ -7,8 +7,8 @@ interface CollidableProps {
 };
 
 const DEFAULT_PROPERTIES: CollidableProps = {
-    μs: 0.9,
-    μk: 0.2,
+    μs: 0.8,
+    μk: 0.4,
 };
 
 /* Normals of a cube are unit vectors I, J and K */

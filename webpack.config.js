@@ -1,9 +1,16 @@
 const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 const path = require('path');
 
+const build_mode =
+    process.env.BUILD_MODE == 'development'
+        ? 'development'
+        : 'production';
+
+console.log(build_mode);
+
 module.exports = {
     entry: './src/index.ts',
-    mode: 'development',
+    mode: build_mode,
     module: {
         rules: [
             {
